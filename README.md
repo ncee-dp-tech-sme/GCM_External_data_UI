@@ -2,6 +2,7 @@
 
 **Version:** 1.0.0  
 **Last Updated:** 2026-06-02
+- **Main Repository**: https://github.com/ncee-dp-tech-sme/GCM_External_data_UI.git
 
 ## Overview
 
