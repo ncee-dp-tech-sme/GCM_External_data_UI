@@ -4,6 +4,9 @@
 **Last Updated:** 2026-06-02
 - **Main Repository**: https://github.com/ncee-dp-tech-sme/GCM_External_data_UI.git
 
+
+[![Hits](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fncee-dp-tech-sme.github.io%2FGCM_External_data_UI%2F&count_bg=%2379C83D&title_bg=%23555555&icon=https://ncee-dp-tech-sme.github.io/hexstrike-ai-docker/content/Bob_Thum_1.jpeg&icon_color=%23E7E7E7&title=Number+of+Visitors&edge_flat=false)](https://hits.seeyoufarm.com)
+
 ## Overview
 
 This is a distributable package of the GCM (Guardium Cryptography Manager) Web UI application. It provides a complete web-based interface for managing GCM operations including certificate management, IT asset management, profile management, and authentication. Additional features for user management and disconnected scanning are planned for future releases.
