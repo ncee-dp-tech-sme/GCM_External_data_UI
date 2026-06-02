@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GCM Web UI - Dashboard</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1>🔐 Guardium Cryptography Manager</h1>
+                <div class="header-actions">
+                    <span id="activeProfileBadge" class="badge">No Active Profile</span>
+                    <button id="refreshBtn" class="btn btn-secondary">🔄 Refresh</button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Navigation -->
+        <nav class="nav-tabs">
+            <button class="nav-tab active" data-page="dashboard">📊 Dashboard</button>
+            <button class="nav-tab" data-page="profiles">👤 Profiles</button>
+            <button class="nav-tab" data-page="certificates">📜 Certificates</button>
+            <button class="nav-tab" data-page="assets">🏢 IT Assets</button>
+            <button class="nav-tab" data-page="scanner">🔍 Scanner</button>
+            <button class="nav-tab" data-page="auth">🔑 Authentication</button>
+        </nav>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Dashboard Page -->
+            <div id="dashboardPage" class="page active">
+                <div class="page-header">
+                    <h2>Dashboard</h2>
+                    <p class="subtitle">Overview of your GCM connection status and profiles</p>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon">👤</div>
+                        <div class="stat-content">
+                            <div class="stat-label">Total Profiles</div>
+                            <div class="stat-value" id="totalProfiles">0</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">✅</div>
+                        <div class="stat-content">
+                            <div class="stat-label">Active Profile</div>
+                            <div class="stat-value" id="activeProfileName">None</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">🔑</div>
+                        <div class="stat-content">
+                            <div class="stat-label">Auth Status</div>
+                            <div class="stat-value" id="authStatus">Not Authenticated</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">🌐</div>
+                        <div class="stat-content">
+                            <div class="stat-label">API Status</div>
+                            <div class="stat-value" id="apiStatus">Checking...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="chart-container">
+                    <h3>Profile Overview</h3>
+                    <canvas id="profileChart"></canvas>
+                </div>
+
+                <div class="quick-actions">
+                    <h3>Quick Actions</h3>
+                    <div class="action-buttons">
+                        <button class="btn btn-primary" onclick="switchToPage('profiles')">
+                            ➕ Create New Profile
+                        </button>
+                        <button class="btn btn-primary" onclick="switchToPage('auth')">
+                            🔑 Authenticate
+                        </button>
+                        <button class="btn btn-secondary" onclick="testConnection()">
+                            🔌 Test Connection
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Profiles Page -->
+            <div id="profilesPage" class="page">
+                <div class="page-header">
+                    <h2>Profile Management</h2>
+                    <p class="subtitle">Create and manage GCM connection profiles</p>
+                </div>
+
+                <div class="form-section">
+                    <h3 id="formTitle">Create New Profile</h3>
+                    <form id="profileForm" class="form">
+                        <input type="hidden" id="profileId" value="">
+                        
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="profileName">Profile Name *</label>
+                                <input type="text" id="profileName" required placeholder="e.g., Production GCM">
+                            </div>
+                            <div class="form-group">
+                                <label for="profileDescription">Description</label>
+                                <input type="text" id="profileDescription" placeholder="Optional description">
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="appUri">GCM Application URI *</label>
+                                <input type="url" id="appUri" required placeholder="https://gcm:31443">
+                            </div>
+                            <div class="form-group">
+                                <label for="oidcUri">OIDC/Keycloak URI *</label>
+                                <input type="url" id="oidcUri" required placeholder="https://gcm:30443">
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="realm">Realm</label>
+                                <input type="text" id="realm" value="gcmrealm" placeholder="gcmrealm">
+                            </div>
+                            <div class="form-group">
+                                <label for="clientId">Client ID</label>
+                                <input type="text" id="clientId" placeholder="gcm-client">
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="clientSecret">Client Secret</label>
+                                <input type="password" id="clientSecret" placeholder="Optional - will be encrypted">
+                            </div>
+                            <div class="form-group">
+                                <label for="tenantId">Tenant ID</label>
+                                <input type="text" id="tenantId" placeholder="Optional tenant ID">
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="username">Username</label>
+                                <input type="text" id="username" placeholder="For password grant flow">
+                            </div>
+                            <div class="form-group">
+                                <label for="password">Password</label>
+                                <input type="password" id="password" placeholder="Will be encrypted">
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="timeout">Timeout (seconds)</label>
+                                <input type="number" id="timeout" value="30" min="1" max="300">
+                            </div>
+                            <div class="form-group">
+                                <label for="userAgent">User Agent</label>
+                                <input type="text" id="userAgent" value="gcm-webui/1.0">
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="insecure">
+                                Skip SSL Verification (not recommended for production)
+                            </label>
+                        </div>
+
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary">💾 Save Profile</button>
+                            <button type="button" class="btn btn-secondary" onclick="resetProfileForm()">🔄 Reset</button>
+                        </div>
+                    </form>
+                </div>
+
+                <div class="profiles-list">
+                    <h3>Existing Profiles</h3>
+                    <div id="profilesList" class="profiles-grid">
+                        <!-- Profiles will be loaded here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Certificates Page -->
+            <div id="certificatesPage" class="page">
+                <div class="page-header">
+                    <h2>Certificate Management</h2>
+                    <p class="subtitle">Manage GCM certificate inventory</p>
+                </div>
+
+                <!-- Action Bar -->
+                <div class="action-bar">
+                    <div class="action-bar-left">
+                        <button class="btn btn-primary" onclick="syncCertificates()">
+                            🔄 Sync from GCM
+                        </button>
+                        <button class="btn btn-primary" onclick="showUploadCertModal()">
+                            ⬆️ Upload Certificate
+                        </button>
+                    </div>
+                    <div class="action-bar-right">
+                        <input type="text" id="certSearch" placeholder="🔍 Search certificates..." class="search-input">
+                        <select id="certFilter" class="filter-select">
+                            <option value="">All Certificates</option>
+                            <option value="expired">Expired</option>
+                            <option value="expiring">Expiring Soon (30 days)</option>
+                            <option value="valid">Valid</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Statistics Cards -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon">📜</div>
+                        <div class="stat-content">
+                            <div class="stat-label">Total Certificates</div>
+                            <div class="stat-value" id="totalCertificates">0</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">✅</div>
+                        <div class="stat-content">
+                            <div class="stat-label">Valid</div>
+                            <div class="stat-value" id="validCertificates">0</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">⚠️</div>
+                        <div class="stat-content">
+                            <div class="stat-label">Expiring Soon</div>
+                            <div class="stat-value" id="expiringSoonCertificates">0</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">❌</div>
+                        <div class="stat-content">
+                            <div class="stat-label">Expired</div>
+                            <div class="stat-value" id="expiredCertificates">0</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Certificates Table -->
+                <div class="table-container">
+                    <table class="data-table" id="certificatesTable">
+                        <thead>
+                            <tr>
+                                <th><input type="checkbox" id="selectAllCerts"></th>
+                                <th>Alias</th>
+                                <th>Subject CN</th>
+                                <th>Issuer CN</th>
+                                <th>URI</th>
+                                <th>Valid From</th>
+                                <th>Valid To</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="certificatesTableBody">
+                            <tr>
+                                <td colspan="9" class="text-center">
+                                    <p class="placeholder">No certificates loaded. Click "Sync from GCM" to fetch certificates.</p>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination -->
+                <div class="pagination" id="certPagination">
+                    <button class="btn btn-secondary" id="certPrevPage" disabled>← Previous</button>
+                    <span id="certPageInfo">Page 1 of 1</span>
+                    <button class="btn btn-secondary" id="certNextPage" disabled>Next →</button>
+                </div>
+            </div>
+
+            <!-- IT Assets Page -->
+            <div id="assetsPage" class="page">
+                <div class="page-header">
+                    <h2>IT Asset Management</h2>
+                    <p class="subtitle">Manage IT assets in GCM inventory</p>
+                </div>
+
+                <div class="action-bar">
+                    <div class="action-bar-left">
+                        <button class="btn btn-primary" id="syncAssetsBtn" onclick="syncAssets()">
+                            🔄 Sync from GCM
+                        </button>
+                        <button class="btn btn-primary" onclick="showCreateAssetModal()">
+                            ➕ Create Asset
+                        </button>
+                    </div>
+                    <div class="action-bar-right">
+                        <input type="text" id="assetSearch" placeholder="🔍 Search assets..." class="search-input">
+                        <select id="assetTypeFilter" class="filter-select">
+                            <option value="">All Types</option>
+                            <option value="Service">Service</option>
+                            <option value="Application">Application</option>
+                            <option value="Database">Database</option>
+                            <option value="Server">Server</option>
+                        </select>
+                        <select id="assetEnvFilter" class="filter-select">
+                            <option value="">All Environments</option>
+                            <option value="Production">Production</option>
+                            <option value="Staging">Staging</option>
+                            <option value="Development">Development</option>
+                            <option value="Testing">Testing</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Statistics Cards -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon">🏢</div>
+                        <div class="stat-content">
+                            <div class="stat-label">Total Assets</div>
+                            <div class="stat-value" id="totalAssets">0</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">📊</div>
+                        <div class="stat-content">
+                            <div class="stat-label">Asset Types</div>
+                            <div class="stat-value" id="assetTypes">0</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">🌐</div>
+                        <div class="stat-content">
+                            <div class="stat-label">Internet Facing</div>
+                            <div class="stat-value" id="internetFacingAssets">0</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">⚠️</div>
+                        <div class="stat-content">
+                            <div class="stat-label">Mission Critical</div>
+                            <div class="stat-value" id="missionCriticalAssets">0</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Assets Table -->
+                <div class="table-container">
+                    <table class="data-table" id="assetsTable">
+                        <thead>
+                            <tr>
+                                <th>URI</th>
+                                <th>Hostname</th>
+                                <th>IP Address</th>
+                                <th>Port</th>
+                                <th>Type</th>
+                                <th>Environment</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="assetsTableBody">
+                            <tr>
+                                <td colspan="7" class="text-center">
+                                    <p class="placeholder">No assets loaded. Click "Sync from GCM" to fetch assets.</p>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination -->
+                <div class="pagination" id="assetPagination">
+                    <button class="btn btn-secondary" id="assetPrevPage" disabled>← Previous</button>
+                    <span id="assetPageInfo">Page 1 of 1</span>
+                    <button class="btn btn-secondary" id="assetNextPage" disabled>Next →</button>
+                </div>
+            </div>
+
+            <!-- Authentication Page -->
+            <div id="authPage" class="page">
+                <div class="page-header">
+                    <h2>Authentication</h2>
+                    <p class="subtitle">Authenticate with GCM using the active profile</p>
+                </div>
+
+                <div class="auth-status-card">
+                    <h3>Current Status</h3>
+                    <div class="status-grid">
+                        <div class="status-item">
+                            <span class="status-label">Active Profile:</span>
+                            <span id="authActiveProfile" class="status-value">None</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">Authentication:</span>
+                            <span id="authTokenStatus" class="status-value">Not Authenticated</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">GCM Authorization:</span>
+                            <span id="gcmAuthStatus" class="status-value">Not Authorized</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="auth-actions">
+                    <h3>Authentication Actions</h3>
+                    <div class="action-cards">
+                        <div class="action-card">
+                            <h4>🔑 Login & Authorize</h4>
+                            <p>Authenticate and automatically authorize to GCM in one step</p>
+                            <button class="btn btn-primary" onclick="performLogin()">Login & Authorize</button>
+                        </div>
+                        <div class="action-card">
+                            <h4>🎫 Get Access Token</h4>
+                            <p>Retrieve or refresh the current access token</p>
+                            <button class="btn btn-primary" onclick="getToken()">Get Token</button>
+                        </div>
+                        <div class="action-card">
+                            <h4>✅ Authorize to GCM</h4>
+                            <p>Authorize against GCM API with current token</p>
+                            <button class="btn btn-primary" onclick="authorizeGCM()">Authorize</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="auth-response">
+                    <h3>Response</h3>
+                    <div id="authResponse" class="response-box">
+                        <p class="placeholder">Authentication responses will appear here...</p>
+                    </div>
+                </div>
+            </div>
+            <!-- Scanner Page -->
+            <div id="scannerPage" class="page">
+                <div class="page-header">
+                    <h2>Disconnected Scanner</h2>
+                    <p class="subtitle">Generate scan targets and import certificates from CSV</p>
+                </div>
+
+                <!-- Step Indicators -->
+                <div class="scanner-steps">
+                    <div class="step-indicator active" data-step="1" onclick="scannerModule.showStep(1)" style="cursor: pointer;">
+                        <div class="step-number">1</div>
+                        <div class="step-label">Generate Targets (Optional)</div>
+                    </div>
+                    <div class="step-indicator" data-step="2" onclick="scannerModule.showStep(2)" style="cursor: pointer;">
+                        <div class="step-number">2</div>
+                        <div class="step-label">Import Certificates</div>
+                    </div>
+                </div>
+
+                <!-- Step 1: Generate Targets -->
+                <div id="scanner-step-1" class="scanner-step">
+                    <div class="scanner-section">
+                        <h3>Step 1: Generate Scan Targets (Optional)</h3>
+                        <p>Define IP ranges, hosts, and ports to generate a CSV file of scan targets. Or skip to <a href="#" onclick="scannerModule.showStep(2); return false;" style="color: var(--primary-color);">Step 2</a> to upload an existing CSV file.</p>
+
+                        <div class="form-section">
+                            <div class="form-group">
+                                <label for="ip-ranges">IP Ranges</label>
+                                <input type="text" id="ip-ranges" placeholder="192.168.1.0/24, 10.0.0.*">
+                                <small>Comma-separated CIDR notation or wildcards (e.g., 192.168.1.0/24, 10.0.0.*)</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="hosts">Hosts (FQDNs)</label>
+                                <input type="text" id="hosts" placeholder="example.com, api.example.com">
+                                <small>Comma-separated fully qualified domain names</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="ports">Ports *</label>
+                                <input type="text" id="ports" placeholder="443, 8443, 443-8443" required>
+                                <small>Comma-separated ports or ranges (e.g., 443, 8443, 443-8443)</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="alias-prefix">Alias Prefix (optional)</label>
+                                <input type="text" id="alias-prefix" placeholder="prod_">
+                                <small>Prefix for generated aliases (e.g., prod_192.168.1.1_443)</small>
+                            </div>
+
+                            <div class="form-actions">
+                                <button id="generate-targets-btn" class="btn btn-primary">🎯 Generate Targets</button>
+                            </div>
+                        </div>
+
+                        <!-- Generation Results -->
+                        <div id="generation-result" class="result-section" style="display: none;">
+                            <h4>✅ Targets Generated Successfully</h4>
+                            <div class="result-stats">
+                                <p><strong>Target Count:</strong> <span id="target-count">0</span></p>
+                                <p><strong>Filename:</strong> <span id="generated-filename">scan_targets.csv</span></p>
+                            </div>
+                            <div class="result-actions">
+                                <button id="download-csv-btn" class="btn btn-success">⬇️ Download CSV</button>
+                                <button id="next-step-btn" class="btn btn-primary" disabled>Next: Import Certificates →</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 2: Import Certificates -->
+                <div id="scanner-step-2" class="scanner-step" style="display: none;">
+                    <div class="scanner-section">
+                        <h3>Step 2: Import Certificates from CSV</h3>
+                        <p>Upload a CSV file containing certificate data to import into GCM. You can use a CSV generated from Step 1, or upload any CSV file with the correct format.</p>
+                        
+                        <div class="info-box" style="background: #e3f2fd; padding: 12px; border-radius: 4px; margin-bottom: 20px;">
+                            <strong>📋 CSV Format Required:</strong>
+                            <ul style="margin: 8px 0 0 20px;">
+                                <li><strong>Alias</strong> - Unique identifier for the certificate</li>
+                                <li><strong>Certdata</strong> - Base64-encoded certificate data</li>
+                                <li><strong>URI (optional)</strong> - URI where certificate is used (e.g., https://example.com:443)</li>
+                            </ul>
+                            <p style="margin: 8px 0 0 0;"><small>💡 Tip: Use <code>convert_certs_into_csv.py</code> to convert certificate files to CSV format</small></p>
+                        </div>
+
+                        <div class="form-section">
+                            <div class="form-group">
+                                <label for="csv-file-input">CSV File *</label>
+                                <input type="file" id="csv-file-input" accept=".csv" required>
+                                <small>Select a CSV file with columns: Alias, Certdata, URI (optional)</small>
+                            </div>
+
+                            <!-- Validation Results -->
+                            <div id="validation-results" class="result-section" style="display: none;">
+                                <!-- Validation results will be displayed here -->
+                            </div>
+
+                            <div class="form-actions">
+                                <button id="prev-step-btn" class="btn btn-secondary">← Back to Generate</button>
+                                <button id="import-csv-btn" class="btn btn-primary" disabled>📤 Import Certificates</button>
+                            </div>
+                        </div>
+
+                        <!-- Import Results -->
+                        <div id="import-results" class="result-section" style="display: none;">
+                            <!-- Import results will be displayed here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+
+        <!-- Certificate Upload Modal -->
+        <div id="uploadCertModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Upload Certificate</h3>
+                    <button class="modal-close" onclick="closeUploadCertModal()">×</button>
+                </div>
+                <form id="uploadCertForm" class="form">
+                    <div class="form-group">
+                        <label for="certFile">Certificate File (PEM/DER) *</label>
+                        <input type="file" id="certFile" accept=".pem,.crt,.cer,.der" required>
+                        <small>Select a certificate file to upload</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="certUri">URI *</label>
+                        <input type="text" id="certUri" required placeholder="https://example.com:443">
+                        <small>URI where the certificate is used</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="certAlias">Alias (optional)</label>
+                        <input type="text" id="certAlias" placeholder="Auto-generated if not provided">
+                        <small>Friendly name for the certificate</small>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">⬆️ Upload</button>
+                        <button type="button" class="btn btn-secondary" onclick="closeUploadCertModal()">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Certificate Details Modal -->
+        <div id="certDetailsModal" class="modal">
+            <div class="modal-content modal-large">
+                <div class="modal-header">
+                    <h3>Certificate Details</h3>
+                    <button class="modal-close" onclick="closeCertDetailsModal()">×</button>
+                </div>
+                <div id="certDetailsContent" class="modal-body">
+                    <!-- Certificate details will be loaded here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Create Asset Modal -->
+        <div id="createAssetModal" class="modal">
+            <div class="modal-content modal-large">
+                <div class="modal-header">
+                    <h3>Create IT Asset</h3>
+                    <button class="modal-close" onclick="closeCreateAssetModal()">×</button>
+                </div>
+                <form id="createAssetForm" class="form">
+                    <h4>Required Information</h4>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="assetUri">URI *</label>
+                            <input type="text" id="assetUri" name="uri" required placeholder="https://example.com:443">
+                            <small>Resource URI</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="assetHostname">Hostname *</label>
+                            <input type="text" id="assetHostname" name="hostname" required placeholder="example.com">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="assetIp">IP Address *</label>
+                            <input type="text" id="assetIp" name="ip" required placeholder="192.168.1.100">
+                        </div>
+                        <div class="form-group">
+                            <label for="assetPort">Port *</label>
+                            <input type="number" id="assetPort" name="port" required placeholder="443">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="assetType">Asset Type *</label>
+                            <select id="assetType" name="asset_type" required>
+                                <option value="">Select type...</option>
+                                <option value="Service">Service</option>
+                                <option value="Application">Application</option>
+                                <option value="Database">Database</option>
+                                <option value="Server">Server</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="assetProtocol">Protocol</label>
+                            <input type="text" id="assetProtocol" name="protocol" placeholder="TLS, TCP, etc.">
+                        </div>
+                    </div>
+
+                    <h4>Optional Information</h4>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="assetSubType">Asset Sub-Type</label>
+                            <input type="text" id="assetSubType" name="asset_sub_type" placeholder="MySQL, PostgreSQL, etc.">
+                        </div>
+                        <div class="form-group">
+                            <label for="assetOwner">Owner</label>
+                            <input type="text" id="assetOwner" name="owner" placeholder="Team or person name">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="assetEnvironment">Environment</label>
+                            <select id="assetEnvironment" name="environment">
+                                <option value="">Select environment...</option>
+                                <option value="Production">Production</option>
+                                <option value="Staging">Staging</option>
+                                <option value="Development">Development</option>
+                                <option value="Testing">Testing</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="assetLocation">Location</label>
+                            <input type="text" id="assetLocation" name="location" placeholder="Data center or region">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="assetNetwork">Network</label>
+                            <input type="text" id="assetNetwork" name="network" placeholder="Network zone">
+                        </div>
+                        <div class="form-group">
+                            <label for="assetTechContacts">Tech Contacts</label>
+                            <input type="text" id="assetTechContacts" name="tech_contacts" placeholder="user1, user2">
+                            <small>Comma-separated list</small>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="assetCriticality">Mission Criticality (0-10)</label>
+                            <input type="number" id="assetCriticality" name="mission_criticality" min="0" max="10" placeholder="5">
+                        </div>
+                        <div class="form-group">
+                            <label for="assetInternetFacing">Internet Facing</label>
+                            <select id="assetInternetFacing" name="internet_facing">
+                                <option value="">Unknown</option>
+                                <option value="TRUE">True</option>
+                                <option value="FALSE">False</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Create Asset</button>
+                        <button type="button" class="btn btn-secondary" onclick="closeCreateAssetModal()">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Asset Details Modal -->
+        <div id="assetDetailsModal" class="modal">
+            <div class="modal-content modal-large">
+                <div class="modal-header">
+                    <h3>Asset Details</h3>
+                    <button class="modal-close" onclick="closeAssetDetailsModal()">×</button>
+                </div>
+                <div id="assetDetailsBody" class="modal-body">
+                    <!-- Asset details will be loaded here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast Notifications -->
+        <div id="toastContainer" class="toast-container"></div>
+    </div>
+
+    <script src="/js/api.js"></script>
+    <script src="/js/ui.js"></script>
+    <script src="/js/certificates.js"></script>
+    <script src="/js/assets.js"></script>
+    <script src="/js/scanner.js"></script>
+    <script src="/js/app.js"></script>
+</body>
+</html>

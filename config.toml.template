@@ -1,0 +1,96 @@
+# GCM API Scripts - Common Configuration File (TOML format)
+# 
+# Usage:
+#   1. Copy this file to config.toml
+#      cp config.toml.template config.toml
+#   2. Configure values for your environment
+#   3. config.toml is already in .gitignore (protects sensitive data)
+#
+# Note: This template file can be committed to the repository, but
+#       the actual config.toml (containing sensitive data) should NOT be committed.
+
+[connection]
+# Base URI for GCM application (required)
+# Example: "https://gcm.example.com:31443"
+app_uri = "https://gcm:31443"
+
+# Base URI for Keycloak OIDC (required)
+# Example: "https://gcm.example.com:30443"
+oidc_uri = "https://gcm:30443"
+
+# OIDC realm name (default: gcmrealm)
+realm = "gcmrealm"
+
+[authentication]
+# OIDC client ID
+# - Default for refresh token: "gcmapiclient"
+# - Default for password authentication: "gcmclient"
+# If empty string, scripts will auto-select based on authentication method
+client_id = ""
+
+# OIDC client secret (for confidential clients, optional)
+# Note: For production, use environment variables or secret management systems
+#       Example: export GCM_CLIENT_SECRET="your-secret-here"
+client_secret = ""
+
+# Authentication credentials (optional - command-line arguments recommended)
+# Warning: Plain text storage is NOT recommended. Use environment variables or prompts
+# 
+# Refresh token (for refresh_token grant)
+# refresh_token = ""
+#
+# Username and password (for password grant)
+# username = ""
+# password = ""
+
+[http]
+# HTTP timeout (seconds)
+# Default: 30.0
+timeout = 30.0
+
+# Disable SSL certificate verification
+# Set to true only for development/test environments
+# MUST be false for production environments
+insecure = false
+
+[tenant]
+# Tenant ID (optional)
+# Specify when using multi-tenant environments
+tenant_id = ""
+
+[advanced]
+# User-Agent string (optional)
+# Used in HTTP request User-Agent header
+user_agent = "gcm-api-scripts/1.0"
+
+# ===================================================================
+# Environment-specific Configuration Examples
+# ===================================================================
+# 
+# For managing multiple environments, create separate files:
+#   - config.dev.toml     (development)
+#   - config.staging.toml (staging)
+#   - config.prod.toml    (production)
+#
+# Usage example:
+#   export GCM_CONFIG=config.prod.toml
+#   python script.py
+#
+# ===================================================================
+# Security Best Practices
+# ===================================================================
+#
+# 1. Protecting sensitive data:
+#    - config.toml is already in .gitignore
+#    - Manage client_secret, password, refresh_token via environment variables
+#    - Example: export GCM_CLIENT_SECRET="secret"
+#               export GCM_REFRESH_TOKEN="token"
+#
+# 2. File permissions:
+#    chmod 600 config.toml  # Read/write for owner only
+#
+# 3. Production environments:
+#    - MUST set insecure = false
+#    - Use secret management systems (Vault, etc.) for credentials
+#
+# ===================================================================
