@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Assets Loading</title>
+</head>
+<body>
+    <h1>Testing Assets API</h1>
+    <button onclick="testAssetsAPI()">Test Assets API</button>
+    <pre id="output"></pre>
+
+    <script>
+        async function testAssetsAPI() {
+            const output = document.getElementById('output');
+            output.textContent = 'Testing...\n';
+            
+            try {
+                // Test 1: Check if API is accessible
+                output.textContent += '\n1. Testing API endpoint...\n';
+                const response = await fetch('/api/v1/assets/?page=1&page_size=20');
+                output.textContent += `   Status: ${response.status}\n`;
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    output.textContent += `   Total assets: ${data.total}\n`;
+                    output.textContent += `   Assets returned: ${data.assets.length}\n`;
+                    output.textContent += `   Page: ${data.page}\n`;
+                    output.textContent += `   Total pages: ${data.total_pages}\n`;
+                    
+                    if (data.assets.length > 0) {
+                        output.textContent += '\n2. First asset:\n';
+                        output.textContent += JSON.stringify(data.assets[0], null, 2);
+                    }
+                    
+                    output.textContent += '\n\n✅ SUCCESS: Assets are loading correctly from the API!';
+                } else {
+                    output.textContent += `   Error: ${await response.text()}\n`;
+                    output.textContent += '\n❌ FAILED: API returned an error';
+                }
+            } catch (error) {
+                output.textContent += `\n❌ ERROR: ${error.message}`;
+            }
+        }
+    </script>
+</body>
+</html>

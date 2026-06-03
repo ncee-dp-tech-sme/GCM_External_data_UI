@@ -12,16 +12,21 @@ let currentAssetFilters = {};
 
 // Load assets page
 async function loadAssets() {
+    console.log('loadAssets() called - initializing assets page');
     try {
         // Load statistics
+        console.log('Loading asset stats...');
         await loadAssetStats();
         
         // Load assets list
+        console.log('Loading assets list...');
         await loadAssetsList();
         
         // Setup event listeners
+        console.log('Setting up event listeners...');
         setupAssetEventListeners();
         
+        console.log('Assets page loaded successfully');
     } catch (error) {
         console.error('Error loading assets:', error);
         showToast(error.message || 'Failed to load assets', 'error');
@@ -128,6 +133,7 @@ async function loadAssetStats() {
 
 // Load assets list
 async function loadAssetsList() {
+    console.log('loadAssetsList() called with page:', currentAssetPage);
     try {
         const searchTerm = document.getElementById('assetSearch')?.value || '';
         const assetType = document.getElementById('assetTypeFilter')?.value || '';
@@ -141,10 +147,14 @@ async function loadAssetsList() {
             environment: environment
         };
         
+        console.log('Fetching assets with params:', params);
         const response = await api.listAssets(params);
+        console.log('API response:', response);
         
         currentAssets = response.assets || [];
         totalAssetPages = response.total_pages || 1;
+        
+        console.log(`Received ${currentAssets.length} assets out of ${response.total} total`);
         
         renderAssetsList(currentAssets);
         updateAssetPagination();
@@ -224,9 +234,11 @@ async function syncAssets() {
         
         if (result.error_count > 0) {
             console.warn('Sync errors:', result.errors);
+            showToast(`Warning: ${result.error_count} errors occurred during sync`, 'warning');
         }
         
-        // Reload stats and list
+        // Reset to page 1 and reload stats and list
+        currentAssetPage = 1;
         await loadAssetStats();
         await loadAssetsList();
         

@@ -3,7 +3,13 @@ IT Asset service layer for GCM Web UI.
 Wraps existing Python modules from it_assets/ directory.
 
 Created: 2026-06-02
-Last Modified: 2026-06-02
+Last Modified: 2026-06-03
+
+Changes:
+- 2026-06-03 22:44 UTC: Fixed UNIQUE constraint error during sync by maintaining existing_assets_by_uri map across all pages instead of recreating it per page. This prevents duplicate inserts when the same URI appears multiple times in the GCM API response across different pages.
+- 2026-06-03 22:54 UTC: Investigation completed - GCM API returns duplicate URIs (178 duplicates out of 646 records). Sync correctly handles this by updating existing assets. Cleaned up debug logging.
+- 2026-06-03 23:07 UTC: Fixed critical pagination bug - changed break condition from 'len(assets_list) < page_size' to 'not assets_list' to properly handle the last page which naturally has fewer assets than page_size.
+- 2026-06-03 23:17 UTC: CRITICAL FIX - Changed commit strategy from single commit at end to commit after each page. This prevents losing all synced data if an error occurs during processing. Assets are now persisted incrementally, ensuring partial sync success even if later pages fail.
 """
 
 import sys
@@ -85,7 +91,6 @@ class ITAssetService:
             all_errors = []
             
             for atype in asset_types:
-                print(f"DEBUG: Syncing asset type: {atype}")
                 synced, created, updated, errors = self._sync_single_asset_type(
                     profile_data, access_token, atype, page_size
                 )
@@ -93,7 +98,6 @@ class ITAssetService:
                 total_created += created
                 total_updated += updated
                 all_errors.extend(errors)
-                print(f"DEBUG: Completed {atype}: {synced} synced ({created} created, {updated} updated)")
             
             return total_synced, total_created, total_updated, all_errors
         else:
@@ -125,6 +129,10 @@ class ITAssetService:
         updated_count = 0
         errors = []
         
+        # Initialize existing_assets_by_uri map ONCE for the entire sync
+        # This map will be updated as new assets are created, preventing duplicates across pages
+        existing_assets_by_uri = {}
+        
         try:
             # Call authorization API first (required before accessing GCM APIs)
             try:
@@ -140,6 +148,9 @@ class ITAssetService:
             list_path = f"ibm/assetinventory/api/v1/assets/it_assets/{asset_type}"
             
             page = 1
+            total_count = None
+            total_pages_calculated = None
+            
             while True:
                 body = {
                     "columns": ["all"],
@@ -158,51 +169,84 @@ class ITAssetService:
                     
                     data = resp.json()
                     
+                    # Get total_count from first page response
+                    if page == 1 and total_count is None:
+                        total_count = data.get("total_count", 0)
+                        if total_count > 0:
+                            # Calculate total pages: ceil(total_count / page_size)
+                            total_pages_calculated = (total_count + page_size - 1) // page_size
+                            print(f"Syncing {asset_type}: {total_count} assets across {total_pages_calculated} pages")
+                    
                     assets_list = data.get("it_assets", [])
                     
+                    # Break only if the response is empty (no more data)
                     if not assets_list:
-                        print(f"DEBUG: No assets found on page {page}")
                         break
                     
-                    print(f"DEBUG: Page {page}: Retrieved {len(assets_list)} assets")
+                    print(f"Page {page}: Processing {len(assets_list)} assets")
+                    
+                    # Update existing_assets_by_uri map with assets from current page
+                    # Only query for URIs that are NOT already in the map (to avoid re-querying)
+                    asset_uris = [asset.get("uri") for asset in assets_list if asset.get("uri")]
+                    
+                    # Filter out URIs already in the map
+                    new_uris = [uri for uri in asset_uris if uri not in existing_assets_by_uri]
+                    
+                    if new_uris:
+                        existing_assets = self.db.query(ITAsset).filter(ITAsset.uri.in_(new_uris)).all()
+                        for asset in existing_assets:
+                            existing_assets_by_uri[asset.uri] = asset
                     
                     # Process each asset
                     for asset_data in assets_list:
                         try:
-                            created = self._sync_single_asset(asset_data)
+                            uri = asset_data.get('uri', 'unknown')
+                            
+                            created = self._sync_single_asset(asset_data, existing_assets_by_uri)
                             synced_count += 1
                             if created:
                                 created_count += 1
                             else:
                                 updated_count += 1
                         except Exception as e:
-                            errors.append(f"Error syncing asset {asset_data.get('uri', 'unknown')}: {str(e)}")
+                            error_msg = f"Error syncing asset {asset_data.get('uri', 'unknown')}: {str(e)}"
+                            print(f"ERROR: {error_msg}")
+                            import traceback
+                            print(f"TRACEBACK: {traceback.format_exc()}")
+                            errors.append(error_msg)
                     
-                    # Check if there are more pages
-                    # Try multiple pagination indicators
-                    total_pages = data.get("total_pages", data.get("totalPages", 1))
-                    total_count = data.get("total_count", data.get("totalCount", 0))
-                    current_page = data.get("page_number", data.get("pageNumber", page))
+                    # Commit after each page to prevent losing all data if an error occurs
+                    try:
+                        self.db.commit()
+                        print(f"Page {page}: Committed {len(assets_list)} assets to database")
+                    except Exception as e:
+                        error_msg = f"Error committing page {page}: {str(e)}"
+                        print(f"ERROR: {error_msg}")
+                        import traceback
+                        print(f"TRACEBACK: {traceback.format_exc()}")
+                        errors.append(error_msg)
+                        self.db.rollback()
+                        # Continue to next page even if commit fails
                     
-                    print(f"DEBUG: Pagination info - total_pages: {total_pages}, total_count: {total_count}, current_page: {current_page}, assets_on_page: {len(assets_list)}")
-                    
-                    # Continue if we got a full page of results (likely more pages exist)
-                    if len(assets_list) < page_size:
-                        print(f"DEBUG: Got {len(assets_list)} assets (less than page_size {page_size}), stopping pagination")
-                        break
-                    
-                    if total_pages > 1 and page >= total_pages:
-                        print(f"DEBUG: Reached last page ({page} >= {total_pages})")
+                    # Check if we've reached the calculated total pages
+                    if total_pages_calculated and page >= total_pages_calculated:
+                        print(f"Reached calculated total pages ({total_pages_calculated})")
                         break
                     
                     page += 1
-                    print(f"DEBUG: Fetching next page: {page}")
                     
                 except Exception as e:
                     errors.append(f"Error fetching page {page}: {str(e)}")
                     break
             
-            self.db.commit()
+            # Final commit is not needed since we commit after each page
+            # But we'll do a final commit to ensure any pending changes are saved
+            try:
+                self.db.commit()
+                print(f"Final commit completed successfully")
+            except Exception as e:
+                print(f"Final commit error (may be harmless): {str(e)}")
+                # Don't add to errors since page commits already succeeded
             
         except Exception as e:
             errors.append(f"Sync error: {str(e)}")
@@ -210,12 +254,17 @@ class ITAssetService:
         
         return synced_count, created_count, updated_count, errors
     
-    def _sync_single_asset(self, asset_data: Dict[str, Any]) -> bool:
+    def _sync_single_asset(
+        self,
+        asset_data: Dict[str, Any],
+        existing_assets_by_uri: Optional[Dict[str, ITAsset]] = None
+    ) -> bool:
         """
         Sync a single asset from GCM data.
         
         Args:
             asset_data: Asset data from GCM API
+            existing_assets_by_uri: Map of URI to existing ITAsset objects
             
         Returns:
             True if created, False if updated
@@ -224,23 +273,32 @@ class ITAssetService:
         if not uri:
             raise ValueError("Asset missing URI")
         
-        # Check if asset exists
-        existing = self.db.query(ITAsset).filter(ITAsset.uri == uri).first()
+        # Resolve existing asset by URI first.
+        existing = None
+        if existing_assets_by_uri is not None:
+            existing = existing_assets_by_uri.get(uri)
+        
+        if existing is None:
+            existing = self.db.query(ITAsset).filter(ITAsset.uri == uri).first()
         
         # Map GCM fields to database fields
         asset_dict = self._map_gcm_to_db(asset_data)
         asset_dict["last_synced"] = datetime.utcnow()
         
         if existing:
-            # Update existing asset
+            # Update existing asset matched by unique URI.
             for key, value in asset_dict.items():
                 setattr(existing, key, value)
+            if existing_assets_by_uri is not None:
+                existing_assets_by_uri[uri] = existing
             return False
-        else:
-            # Create new asset
-            new_asset = ITAsset(**asset_dict)
-            self.db.add(new_asset)
-            return True
+        
+        # Create new asset only when the URI does not exist.
+        new_asset = ITAsset(**asset_dict)
+        self.db.add(new_asset)
+        if existing_assets_by_uri is not None:
+            existing_assets_by_uri[uri] = new_asset
+        return True
     
     def _map_gcm_to_db(self, gcm_data: Dict[str, Any]) -> Dict[str, Any]:
         """

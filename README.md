@@ -2,7 +2,6 @@
 
 **Version:** 1.0.0  
 **Last Updated:** 2026-06-02
-- **Main Repository**: https://github.com/ncee-dp-tech-sme/GCM_External_data_UI.git
 
 ## Overview
 
@@ -530,4 +529,4 @@ This application integrates with:
 
 ---
 
-**Note**: This is experimental software. Review and adapt the code and configurations to your organization's security and operational standards before production use. No official support. For any questions, reach out to Erwin Friethoff.
+**Note**: This is experimental software. Review and adapt the code and configurations to your organization's security and operational standards before production use.
