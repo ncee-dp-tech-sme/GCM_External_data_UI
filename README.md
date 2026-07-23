@@ -568,6 +568,24 @@ lsof -ti:8000 | xargs kill -9  # On Linux/macOS
 
 Known issues and limitations in the current release.
 
+### Scanner: "Import All to GCM" Has No Immediate Feedback; Use "Import Certificates" as the Reliable Path
+
+**Status:** Open — behaviour is by design but feedback is missing.
+
+**Symptoms:**
+- After a scan completes on Step 2, clicking **📤 Import All to GCM** appears to do nothing — no spinner, no confirmation, and no visible change in the UI.
+- Assets (TLS certificates, TLS protocols) *are* being imported in the background; the lack of feedback is a UI gap, not an import failure.
+- The **📤 Import All to GCM** button on Step 2 may not appear at all when scan results contain only banner-detected hosts with no TLS or SSH service data.
+
+**Workaround:** Use the **Import Certificates** tab (Step 3) instead:
+1. After the scan finishes on Step 2, click **Next: Import Certificates →** to go to Step 3.
+2. The certificates CSV from the scan is pre-loaded. Click **📤 Import All to GCM** on Step 3.
+3. Step 3 shows a live results table with **Imported** / **Failed** counts and a collapsible **GCM responses** panel — giving full visibility into what was accepted or rejected.
+
+**Note:** TLS protocol metadata and SSH host keys are *only* imported by the Step 2 **Import All to GCM** button, not by the Step 3 certificate import. If those object types matter, click the Step 2 button and then verify the results by syncing the relevant section in GCM directly. The import runs even without visible feedback.
+
+---
+
 ### SSH Host Keys: Not Discoverable or Ingestible via GCM
 
 **Status:** Open — no known workaround at this time.
