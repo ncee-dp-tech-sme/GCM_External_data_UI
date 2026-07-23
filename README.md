@@ -1,7 +1,7 @@
 # GCM Web UI - Distribution Package
 
-**Version:** 1.3.0
-**Last Updated:** 2026-07-25
+**Version:** 1.3.1
+**Last Updated:** 2026-07-28
 
 ## Overview
 
@@ -314,7 +314,7 @@ The scanner page provides a guided three-step workflow for discovering and impor
 4. Download the CSV or proceed directly to Step 2.
 
 **Step 2 — Scan Targets**
-1. Optionally upload a targets CSV (must have `Alias` and `URI` columns). Leave the file input empty to reuse the CSV generated in Step 1.
+1. Optionally upload a targets CSV (must have `Alias` and `URI` columns) using the **Targets CSV File** file picker. Leave it empty to reuse the CSV generated in Step 1.
 2. Set the per-target **timeout** (default: 5 seconds).
 3. Enable **Allow self-signed certificates** if targets use untrusted certificates.
 4. Click **Run Scan**.
@@ -358,7 +358,7 @@ When a scan was run in Step 2, a summary shows the number of each object type re
 | **SSH Host Keys** | `POST /v2/…/crypto_objects/keys` | Key algorithm, estimated key length, advertised algorithms (in extensions), IT asset relationship |
 | **TLS Protocols** | `POST /v2/…/crypto_objects/protocols` | TLS version, cipher suite, IT asset URI |
 
-After import, a results table shows **Imported** and **Failed** counts per object type, plus any per-target error messages.
+After import, a results table shows **Imported** and **Failed** counts per object type. Expand the **GCM responses** collapsible section to see the raw GCM response body for every per-object API call — useful for diagnosing why objects accepted by GCM may not appear in the inventory (e.g. unknown IT asset URI, unsupported field value).
 
 Alternatively, expand **Or upload a certificates CSV manually** to import only TLS certificates from a custom CSV file (useful when scanning was done offline with `convert_certs_into_csv.py`).
 
@@ -525,6 +525,18 @@ cd backend
 rm gcm_webui.db
 uvicorn app.main:app --reload  # Will recreate database
 ```
+
+### Scanner: Objects Show as Imported but Are Not Visible in GCM
+
+**Problem**: After clicking **📤 Import All to GCM** the results table shows non-zero **Imported** counts for SSH host keys or TLS protocols, but the objects do not appear in the GCM inventory.
+
+**Cause**: GCM returns HTTP 200 for the ingest request even when it silently rejects individual records (e.g. because the `it_asset_uri` does not match a known IT asset, or a field value is not in an expected enumeration).
+
+**Solution**:
+1. Expand the **GCM responses** collapsible section in the import results panel — it shows the raw GCM response body per object.
+2. Look for messages such as `"no asset found for uri"`, `"invalid value"`, or a `created_count: 0` in the JSON body.
+3. Ensure the URI used in the scan target CSV matches an existing IT asset URI registered in GCM (exact string match, including scheme and port).
+4. If IT assets for those hosts do not yet exist in GCM, create or import them first via the **IT Assets** tab before re-running the ingest.
 
 ### Port Already in Use
 

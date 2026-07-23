@@ -31,6 +31,9 @@ Last Modified: 2026-07-28 00:00 UTC - Remove 'results' from done SSE event (larg
 Last Modified: 2026-07-28 00:01 UTC - Fix SSH key ingest payload: replace nested relationships block with
                                         flat it_asset_uri field to match the structure accepted by GCM v2
                                         keys API (mirrors the working protocol ingest structure).
+Last Modified: 2026-07-28 00:02 UTC - Capture GCM response body in ingest_keys/protocols_from_results
+                                        errors list so the UI can surface the actual GCM confirmation or
+                                        error detail even when HTTP status is 2xx.
 """
 
 import sys
@@ -517,9 +520,11 @@ class ScannerService:
                     resp = ScannerService._gcm_post(client, auth_headers, ingest_path, body)
                     if resp.ok:
                         imported_count += 1
+                        # Always record GCM's response so the UI can show what was actually created
+                        errors.append(f"{alias}: OK {resp.status_code} — {resp.text[:200]}")
                     else:
                         failed_count += 1
-                        errors.append(f"{alias}: HTTP {resp.status_code} - {resp.text[:100]}")
+                        errors.append(f"{alias}: HTTP {resp.status_code} - {resp.text[:200]}")
                 except Exception as e:
                     failed_count += 1
                     errors.append(f"{alias}: {str(e)}")
@@ -587,9 +592,11 @@ class ScannerService:
                     resp = ScannerService._gcm_post(client, auth_headers, ingest_path, body)
                     if resp.ok:
                         imported_count += 1
+                        # Always record GCM's response so the UI can show what was actually created
+                        errors.append(f"{alias}: OK {resp.status_code} — {resp.text[:200]}")
                     else:
                         failed_count += 1
-                        errors.append(f"{alias}: HTTP {resp.status_code} - {resp.text[:100]}")
+                        errors.append(f"{alias}: HTTP {resp.status_code} - {resp.text[:200]}")
                 except Exception as e:
                     failed_count += 1
                     errors.append(f"{alias}: {str(e)}")

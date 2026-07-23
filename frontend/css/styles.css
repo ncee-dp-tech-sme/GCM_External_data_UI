@@ -322,6 +322,14 @@ body {
     transition: border-color 0.2s ease;
 }
 
+/* File inputs should not use the text-input padding/border styling */
+.form-group input[type="file"] {
+    padding: 6px 0;
+    border: none;
+    border-radius: 0;
+    font-size: 0.9rem;
+}
+
 .form-group input:focus,
 .form-group select:focus,
 .form-group textarea:focus {

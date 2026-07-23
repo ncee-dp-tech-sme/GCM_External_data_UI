@@ -18,6 +18,8 @@
  *                              populate ingest-from-scan panel on Step 3 with object counts
  * Last Modified: 2026-07-25 - Fix SSE buffer flush: 'done' event stranded in buffer when stream closes
  *                              simultaneously was never processed; rewrite loop to flush on stream end
+ * Last Modified: 2026-07-28 - displayIngestAllResults: split GCM response bodies (OK 200) from real errors;
+ *                              show GCM confirmations in collapsible details block for easier debugging
  */
 
 // Scanner state
@@ -865,7 +867,9 @@ async function handleIngestAll() {
 }
 
 /**
- * Display combined ingest-all results (Step 3)
+ * Display combined ingest-all results (Step 3).
+ * The errors list from the backend now also contains "OK 200 — <gcm body>" lines for
+ * successful requests, so we split them into responses vs actual errors for display.
  */
 function displayIngestAllResults(certResult, ingestResult) {
     const resultsDiv = document.getElementById('import-results');
@@ -894,9 +898,22 @@ function displayIngestAllResults(certResult, ingestResult) {
             </tbody>
         </table>`;
 
-    const allErrors = [...(certResult.errors || []), ...(ingestResult.errors || [])];
+    // Split ingest messages into GCM responses (OK …) and actual errors
+    const allMessages = [...(ingestResult.errors || [])];
+    const gcmResponses = allMessages.filter(e => e.includes(': OK '));
+    const failErrors   = allMessages.filter(e => !e.includes(': OK '));
+    const certErrors   = (certResult.errors || []);
+
+    if (gcmResponses.length > 0) {
+        html += '<details style="margin-top:8px;"><summary style="cursor:pointer; font-size:12px; color:#57606a;">GCM responses (' + gcmResponses.length + ')</summary>';
+        html += '<ul style="margin:4px 0 0 16px; font-size:11px; font-family:monospace; color:#57606a;">';
+        gcmResponses.forEach(e => { html += `<li>${escapeHtml(e)}</li>`; });
+        html += '</ul></details>';
+    }
+
+    const allErrors = [...certErrors, ...failErrors];
     if (allErrors.length > 0) {
-        html += '<div style="margin-top:8px;"><strong>Errors:</strong><ul style="margin:4px 0 0 16px; font-size:12px;">';
+        html += '<div style="margin-top:8px;"><strong style="color:#dc2626;">Errors:</strong><ul style="margin:4px 0 0 16px; font-size:12px;">';
         allErrors.forEach(e => { html += `<li>${escapeHtml(e)}</li>`; });
         html += '</ul></div>';
     }
