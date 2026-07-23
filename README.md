@@ -1,6 +1,6 @@
 # GCM Web UI - Distribution Package
 
-**Version:** 1.3.3
+**Version:** 1.3.4
 **Last Updated:** 2026-07-29
 
 ## Overview
@@ -563,6 +563,36 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080
 # Or find and kill the process using port 8000
 lsof -ti:8000 | xargs kill -9  # On Linux/macOS
 ```
+
+## Errata
+
+Known issues and limitations in the current release.
+
+### SSH Host Keys: Not Discoverable or Ingestible via GCM
+
+**Status:** Open — no known workaround at this time.
+
+**Symptoms:**
+- SSH host keys are detected and displayed correctly in the Step 2 scan results table.
+- Clicking **📤 Import All to GCM** posts keys to GCM's `/v2/assets/ingest/crypto_objects/keys` endpoint.
+- GCM returns HTTP 200 but with `"No Data to Ingest"` and `crypto_object_keys: {"skipped": [{"index": 1, "message": "Unique Identifier not found"}]}` for every SSH target, regardless of URI format or pre-created IT asset records.
+
+**What has been tried and ruled out:**
+
+| Attempt | Outcome |
+|---|---|
+| Added `relationships` block + `relationship_type: HOSTED_ON` to key payload | Still skipped |
+| Pre-created IT asset via `/v2/assets/ingest/it_assets` before posting the key | Still skipped |
+| Added `ip` field to IT asset upsert (required for GCM to store the record) | Still skipped |
+| Changed URI scheme from `ssh://host:22` → `https://host:22` (GCM rejects `ssh://` silently) | Still skipped |
+
+TLS protocol objects ingest successfully for the same hosts under the same conditions, which confirms authentication, network connectivity, and IT asset pre-creation are working correctly. The failure is specific to the `crypto_objects/keys` endpoint.
+
+**Likely cause:** The GCM `/v2/assets/ingest/crypto_objects/keys` endpoint may require the target IT asset to have been discovered and indexed by GCM's own discovery mechanism (not via the ingest API) before it can accept a key relationship. Alternatively, an undocumented required field or a tenant-level permission may be missing from the key payload.
+
+**Workaround:** None currently. SSH host key data is captured in the scan results and can be exported (the certificates CSV contains TLS data; SSH key details are visible in the UI). Ingesting SSH keys into GCM will require either a fix to the key payload format once the correct required fields are identified, or a GCM API clarification.
+
+---
 
 ## Production Deployment
 
