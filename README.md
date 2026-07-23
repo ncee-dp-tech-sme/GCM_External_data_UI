@@ -1,6 +1,6 @@
 # GCM Web UI - Distribution Package
 
-**Version:** 1.3.1
+**Version:** 1.3.2
 **Last Updated:** 2026-07-28
 
 ## Overview
@@ -358,7 +358,9 @@ When a scan was run in Step 2, a summary shows the number of each object type re
 | **SSH Host Keys** | `POST /v2/…/crypto_objects/keys` | Key algorithm, estimated key length, advertised algorithms (in extensions), IT asset relationship |
 | **TLS Protocols** | `POST /v2/…/crypto_objects/protocols` | TLS version, cipher suite, IT asset URI |
 
-After import, a results table shows **Imported** and **Failed** counts per object type. Expand the **GCM responses** collapsible section to see the raw GCM response body for every per-object API call — useful for diagnosing why objects accepted by GCM may not appear in the inventory (e.g. unknown IT asset URI, unsupported field value).
+Before each crypto-object POST, the importer automatically upserts a minimal IT asset record for the target URI (`POST /v2/…/ingest/it_assets`) so that GCM can resolve the `it_asset_uri` reference. This prevents the `"Unique Identifier not found"` skip that occurs when a host has no existing IT asset entry in GCM.
+
+After import, a results table shows **Imported** and **Failed** counts per object type. Expand the **GCM responses** collapsible section to see the raw GCM response body for every per-object API call — useful for diagnosing any remaining issues.
 
 Alternatively, expand **Or upload a certificates CSV manually** to import only TLS certificates from a custom CSV file (useful when scanning was done offline with `convert_certs_into_csv.py`).
 
@@ -528,15 +530,14 @@ uvicorn app.main:app --reload  # Will recreate database
 
 ### Scanner: Objects Show as Imported but Are Not Visible in GCM
 
-**Problem**: After clicking **📤 Import All to GCM** the results table shows non-zero **Imported** counts for SSH host keys or TLS protocols, but the objects do not appear in the GCM inventory.
+**Problem**: After clicking **📤 Import All to GCM** the results table shows non-zero **Imported** counts for SSH host keys or TLS protocols, but the objects do not appear in the GCM inventory, and the GCM responses panel shows `"Unique Identifier not found"`.
 
-**Cause**: GCM returns HTTP 200 for the ingest request even when it silently rejects individual records (e.g. because the `it_asset_uri` does not match a known IT asset, or a field value is not in an expected enumeration).
+**Cause (fixed in v1.3.2)**: GCM's crypto-object ingest APIs require a pre-existing IT asset record that matches the `it_asset_uri` field. The importer now automatically creates that asset before each object POST, so this should no longer occur.
 
-**Solution**:
-1. Expand the **GCM responses** collapsible section in the import results panel — it shows the raw GCM response body per object.
-2. Look for messages such as `"no asset found for uri"`, `"invalid value"`, or a `created_count: 0` in the JSON body.
-3. Ensure the URI used in the scan target CSV matches an existing IT asset URI registered in GCM (exact string match, including scheme and port).
-4. If IT assets for those hosts do not yet exist in GCM, create or import them first via the **IT Assets** tab before re-running the ingest.
+**If it still happens**:
+1. Expand the **GCM responses** collapsible section — look for `[asset]:` prefixed lines that indicate the IT asset upsert itself failed.
+2. Check that the GCM profile has permission to write IT assets (`POST /v2/assets/ingest/it_assets`).
+3. Verify the URI format in the scan targets CSV is reachable/parseable (must include scheme, e.g. `https://host:443`).
 
 ### Port Already in Use
 

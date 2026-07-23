@@ -34,6 +34,9 @@ Last Modified: 2026-07-28 00:01 UTC - Fix SSH key ingest payload: replace nested
 Last Modified: 2026-07-28 00:02 UTC - Capture GCM response body in ingest_keys/protocols_from_results
                                         errors list so the UI can surface the actual GCM confirmation or
                                         error detail even when HTTP status is 2xx.
+Last Modified: 2026-07-28 00:03 UTC - Add _ensure_it_asset() that upserts a minimal IT asset in GCM
+                                        before each key/protocol ingest; fixes "Unique Identifier not
+                                        found" skips when the host has no pre-existing asset record.
 """
 
 import sys
@@ -450,6 +453,42 @@ class ScannerService:
         })
 
     @staticmethod
+    def _ensure_it_asset(
+        client: "AuthzClient",
+        auth_headers: Dict[str, Any],
+        uri: str,
+    ) -> Optional[str]:
+        """
+        Upsert a minimal IT asset in GCM for the given URI.
+        Extracts hostname, port and protocol from the URI so the asset can be
+        created even when it does not yet exist — preventing the crypto-object
+        ingest from skipping records with 'Unique Identifier not found'.
+        Returns an error string on failure, or None on success.
+        """
+        parsed = urlparse(uri)
+        hostname = parsed.hostname or uri
+        port     = parsed.port or (22 if parsed.scheme in ("ssh", "") else 443)
+        scheme   = parsed.scheme.upper() if parsed.scheme else "HTTPS"
+
+        asset_body: Dict[str, Any] = {
+            "uri":        uri,
+            "hostname":   hostname,
+            "port":       port,
+            "asset_type": "SERVER",
+            "protocol":   scheme,
+            "discovery_sources": ["GCM-Scanner"],
+        }
+        payload = {"it_assets": [asset_body]}
+        ingest_path = "ibm/assetinventory/api/v2/assets/ingest/it_assets"
+        try:
+            resp = ScannerService._gcm_post(client, auth_headers, ingest_path, payload)
+            if not resp.ok:
+                return f"IT asset upsert failed ({resp.status_code}): {resp.text[:120]}"
+        except Exception as e:
+            return f"IT asset upsert error: {str(e)}"
+        return None
+
+    @staticmethod
     def ingest_keys_from_results(
         results: List[Dict[str, Any]],
         profile_data: Dict[str, Any],
@@ -477,12 +516,21 @@ class ScannerService:
         try:
             client = ScannerService._build_gcm_client(profile_data)
             ingest_path = "ibm/assetinventory/api/v2/assets/ingest/crypto_objects/keys"
+            # Track URIs already upserted this run to avoid redundant asset POSTs
+            _ensured_uris: set = set()
 
             for r in ssh_results:
                 alias    = r.get("alias", "")
                 uri      = r.get("uri", "")
                 key_type = r.get("ssh_host_key_type", "")   # e.g. "rsa-sha2-512", "ssh-rsa", "ecdsa-sha2-nistp256"
                 alg_list = r.get("ssh_host_key_fingerprint", "")  # comma-sep algorithm string
+
+                # Ensure the IT asset exists in GCM before posting the key object
+                if uri and uri not in _ensured_uris:
+                    asset_err = ScannerService._ensure_it_asset(client, auth_headers, uri)
+                    if asset_err:
+                        errors.append(f"{alias} [asset]: {asset_err}")
+                    _ensured_uris.add(uri)
 
                 # Normalise SSH wire-format key type → clean algorithm name for GCM
                 if "ed25519" in key_type:
@@ -562,12 +610,21 @@ class ScannerService:
         try:
             client = ScannerService._build_gcm_client(profile_data)
             ingest_path = "ibm/assetinventory/api/v2/assets/ingest/crypto_objects/protocols"
+            # Track URIs already upserted this run to avoid redundant asset POSTs
+            _ensured_uris: set = set()
 
             for r in tls_results:
                 alias   = r.get("alias", "")
                 uri     = r.get("uri", "")
                 tls_ver = r.get("tls_version", "")
                 cipher  = r.get("cipher_suite", "")
+
+                # Ensure the IT asset exists in GCM before posting the protocol object
+                if uri and uri not in _ensured_uris:
+                    asset_err = ScannerService._ensure_it_asset(client, auth_headers, uri)
+                    if asset_err:
+                        errors.append(f"{alias} [asset]: {asset_err}")
+                    _ensured_uris.add(uri)
 
                 body = {
                     "crypto_object_protocols": [
