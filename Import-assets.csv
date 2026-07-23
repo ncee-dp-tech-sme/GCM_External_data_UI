@@ -1,0 +1,2 @@
+URI,IP,Hostname,Protocol,Port,Asset type,Asset sub type,Business impact,Internet facing,Owner,Tech contacts,Network,Environment,Location
+api-qa-5vvd.infra.private:5432,10.82.25.111,api-qa-5vvd.infra.private,TLS,5432,Database,MySQL,Severe,TRUE,user101,"user1,admin2",zone-1,Staging,"Helsinki, Finland"
