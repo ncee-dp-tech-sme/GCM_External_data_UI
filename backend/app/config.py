@@ -1,6 +1,7 @@
 """
 Application configuration management
 Loads settings from environment variables
+2026-07-30T00:00:00Z - Added ENABLE_ASSET_SYNC feature flag for optional asset/crypto-object UI
 """
 
 from pydantic_settings import BaseSettings
@@ -35,6 +36,11 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
     log_file: str = "logs/app.log"
+
+    # Feature flags
+    # Set ENABLE_ASSET_SYNC=true to show the IT Assets and Crypto Objects tabs,
+    # their Sync-from-GCM buttons, and the related dashboard quick actions.
+    enable_asset_sync: bool = False
     
     @property
     def cors_origins_list(self) -> List[str]:

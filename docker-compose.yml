@@ -1,0 +1,35 @@
+# 2026-07-30T00:00:00Z - Added docker-compose.yml for GCM Web UI
+#
+# Usage:
+#   1. Copy backend/.env.example to backend/.env and fill in the required values.
+#   2. docker compose up -d
+#
+# The database file is persisted in a named volume.  Set ENABLE_ASSET_SYNC=true
+# in backend/.env (or as an env_file override) to enable the IT Assets and
+# Crypto Objects tabs and their sync actions.
+
+services:
+  gcm-webui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gcm-webui:latest
+    container_name: gcm-webui
+    ports:
+      - "${PORT:-8000}:${PORT:-8000}"
+    env_file:
+      - backend/.env
+    volumes:
+      # Persist the SQLite database across container restarts
+      - gcm-data:/app/backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+volumes:
+  gcm-data:
+    driver: local

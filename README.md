@@ -586,29 +586,144 @@ Known issues and limitations in the current release.
 
 ---
 
-### SSH Host Keys: Not Discoverable or Ingestible via GCM
+### SSH Host Keys: Discovery Works, GCM Ingestion Always Skipped
 
 **Status:** Open — no known workaround at this time.
 
-**Symptoms:**
-- SSH host keys are detected and displayed correctly in the Step 2 scan results table.
-- Clicking **📤 Import All to GCM** posts keys to GCM's `/v2/assets/ingest/crypto_objects/keys` endpoint.
-- GCM returns HTTP 200 but with `"No Data to Ingest"` and `crypto_object_keys: {"skipped": [{"index": 1, "message": "Unique Identifier not found"}]}` for every SSH target, regardless of URI format or pre-created IT asset records.
+**Affected versions:** All (including v1.3.4)
 
-**What has been tried and ruled out:**
+**Scope:** SSH host-key crypto objects only. TLS certificates and TLS protocol objects ingest correctly under the same conditions.
+
+#### What works
+
+- The scanner (Step 2) successfully connects to SSH ports, reads the server's KEXINIT exchange, and extracts the host-key algorithm and advertised key types.
+- Scan results display correctly in the Step 2 results table with service type `SSH`.
+- The IT asset pre-creation step (`POST /v2/assets/ingest/it_assets`) completes with HTTP 200 and a non-empty `it_assets` block in the GCM response.
+
+#### What fails
+
+Clicking **📤 Import All to GCM** posts each SSH host key to:
+
+```
+POST /v2/assets/ingest/crypto_objects/keys
+```
+
+GCM returns **HTTP 200** but the response body always contains:
+
+```json
+{
+  "message": "No Data to Ingest",
+  "crypto_object_keys": {
+    "skipped": [
+      { "index": 1, "message": "Unique Identifier not found" }
+    ]
+  }
+}
+```
+
+Every SSH key record is skipped regardless of how the request payload is constructed.
+
+#### What has been tried and ruled out
 
 | Attempt | Outcome |
 |---|---|
-| Added `relationships` block + `relationship_type: HOSTED_ON` to key payload | Still skipped |
-| Pre-created IT asset via `/v2/assets/ingest/it_assets` before posting the key | Still skipped |
-| Added `ip` field to IT asset upsert (required for GCM to store the record) | Still skipped |
-| Changed URI scheme from `ssh://host:22` → `https://host:22` (GCM rejects `ssh://` silently) | Still skipped |
+| Added `relationships` block with `relationship_type: HOSTED_ON` to the key payload | Still skipped |
+| Pre-created the IT asset via `/v2/assets/ingest/it_assets` before posting the key | Still skipped |
+| Added mandatory `ip` field to the IT asset upsert body | Still skipped |
+| Changed the target URI scheme from `ssh://host:22` to `https://host:22` | Still skipped (GCM silently discards assets stored with `ssh://` URIs) |
+| Verified authentication, network path, and tenant permissions against a TLS target on the same host | TLS objects ingest correctly — confirming the issue is endpoint-specific |
 
-TLS protocol objects ingest successfully for the same hosts under the same conditions, which confirms authentication, network connectivity, and IT asset pre-creation are working correctly. The failure is specific to the `crypto_objects/keys` endpoint.
+#### Likely cause
 
-**Likely cause:** The GCM `/v2/assets/ingest/crypto_objects/keys` endpoint may require the target IT asset to have been discovered and indexed by GCM's own discovery mechanism (not via the ingest API) before it can accept a key relationship. Alternatively, an undocumented required field or a tenant-level permission may be missing from the key payload.
+The GCM `/v2/assets/ingest/crypto_objects/keys` endpoint appears to require the target IT asset to have been **discovered and indexed by GCM's own internal discovery mechanism** before it will accept an externally ingested key relationship. Assets created solely via the ingest API are not sufficient. Alternatively, there may be an undocumented required field or a tenant-level entitlement missing from the key payload — GCM does not surface a useful error beyond `"Unique Identifier not found"`.
 
-**Workaround:** None currently. SSH host key data is captured in the scan results and can be exported (the certificates CSV contains TLS data; SSH key details are visible in the UI). Ingesting SSH keys into GCM will require either a fix to the key payload format once the correct required fields are identified, or a GCM API clarification.
+#### Impact and workaround
+
+- **SSH host key data is not lost.** The scan captures the key algorithm and advertised types; this information is visible in the Step 2 results table for manual review.
+- **No automated ingestion workaround exists** until the correct payload format or required precondition is identified.
+- TLS certificates and TLS protocol metadata from the same scan are unaffected and import normally.
+
+If you have access to GCM API documentation for `/v2/assets/ingest/crypto_objects/keys` or can obtain a working example payload from IBM support, please open an issue — the fix would be a targeted change to the key payload builder in [`backend/app/services/scanner_service.py`](backend/app/services/scanner_service.py).
+
+---
+
+## Docker Deployment
+
+The easiest way to run GCM Web UI is as a Docker container. The image bundles the backend and frontend into a single container — no separate web server is required.
+
+### Prerequisites
+
+- Docker 20.10+ and Docker Compose v2 (or `docker-compose` v1.29+)
+- A copy of `backend/.env` with valid `SECRET_KEY`, `ENCRYPTION_KEY`, and — if needed — `ENABLE_ASSET_SYNC`.
+
+### Quick Start
+
+```bash
+# 1. Clone / extract the repo and enter the project root
+cd /path/to/GCM_External_data_UI
+
+# 2. Create .env from the template (generates keys automatically)
+cp backend/.env.example backend/.env
+# Edit backend/.env and set SECRET_KEY, ENCRYPTION_KEY (use backend/setup.sh to auto-generate)
+
+# 3. Build and start
+docker compose up -d --build
+
+# 4. Open the UI
+open http://localhost:8000
+```
+
+The SQLite database is persisted in a named Docker volume (`gcm-data`), so your profiles and synced data survive container restarts and image rebuilds.
+
+### Enabling the Asset Sync Feature
+
+By default only the **Profiles**, **Scanner**, and **Authentication** tabs are visible. To also show the **Crypto Objects** and **IT Assets** tabs with their sync actions, set the feature flag in `backend/.env`:
+
+```env
+ENABLE_ASSET_SYNC=true
+```
+
+Then restart the container:
+
+```bash
+docker compose restart gcm-webui
+```
+
+The frontend reads the flag from `/api/v1/config/features` on every page load and reveals (or hides) the tabs and sync buttons accordingly — no rebuild required.
+
+### Environment Variables (Docker)
+
+| Variable | Default | Description |
+|---|---|---|
+| `SECRET_KEY` | *(required)* | JWT / session signing key |
+| `ENCRYPTION_KEY` | *(required)* | Fernet key for encrypting credentials at rest |
+| `ENABLE_ASSET_SYNC` | `false` | Show IT Assets and Crypto Objects tabs |
+| `HOST` | `0.0.0.0` | Bind address |
+| `PORT` | `8000` | Bind port |
+| `LOG_LEVEL` | `INFO` | Uvicorn / app log level |
+| `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed CORS origins |
+
+### Manual Docker Run (without Compose)
+
+```bash
+docker build -t gcm-webui .
+docker run -d \
+  --name gcm-webui \
+  -p 8000:8000 \
+  --env-file backend/.env \
+  -v gcm-data:/app/backend \
+  gcm-webui
+```
+
+### Upgrading the Container
+
+```bash
+# Pull latest code / rebuild
+docker compose build --no-cache
+
+# Restart (database volume is preserved)
+docker compose up -d
+```
 
 ---
 

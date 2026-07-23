@@ -1,0 +1,24 @@
+# 2026-07-30T00:00:00Z - Added .dockerignore to keep the image lean
+.git
+.gitignore
+.bob/
+*.md
+venv/
+__pycache__/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+backend/gcm_webui.db
+backend/logs/
+backend/.env
+task-outcomes/
+analyze_duplicate_uris.py
+fix-assets/
+user_management/
+Import-*.csv
+config.toml
+config.toml.template

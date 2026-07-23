@@ -1,5 +1,6 @@
 // 2026-06-01T23:16:00Z - Created main application logic for GCM Web UI
 // 2026-07-23: Added auth_method and api_key support to profile form handling
+// 2026-07-30T00:00:00Z - Fetch /api/v1/config/features on startup; show asset-sync UI when enabled
 
 /**
  * Main Application Logic
@@ -14,7 +15,23 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeEventListeners();
     loadDashboard();
     checkAPIHealth();
+    applyFeatureFlags();
 });
+
+// Fetch feature flags from the backend and reveal gated UI elements
+async function applyFeatureFlags() {
+    try {
+        const flags = await api.request('/config/features');
+        if (flags.enable_asset_sync) {
+            document.querySelectorAll('.feature-asset-sync').forEach(el => {
+                el.style.display = '';
+            });
+        }
+    } catch (e) {
+        // Non-fatal: feature flags default to off when the endpoint is unreachable
+        console.warn('Could not load feature flags:', e);
+    }
+}
 
 // Initialize event listeners
 function initializeEventListeners() {
