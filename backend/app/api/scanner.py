@@ -4,6 +4,7 @@ Provides target generation and certificate import from CSV.
 
 Created: 2026-06-02
 Last Modified: 2026-06-02
+Last Modified: 2026-07-25 - Added /run-scan endpoint that fetches SSL certificates from a target list.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
@@ -18,7 +19,10 @@ from app.schemas.scanner import (
     CSVImportRequest,
     CSVImportResponse,
     CSVValidationResult,
-    ScannerStats
+    ScannerStats,
+    ScanRequest,
+    ScanResponse,
+    ScanResult,
 )
 from app.services.scanner_service import ScannerService
 from app.services.auth_service import AuthService
@@ -224,6 +228,60 @@ async def import_csv(
         )
 
 
+@router.post("/run-scan", response_model=ScanResponse)
+async def run_scan(
+    request: ScanRequest,
+    db: Session = Depends(get_db)
+) -> ScanResponse:
+    """
+    Scan a list of targets and retrieve their SSL certificates.
+
+    Accepts the CSV produced by /generate-targets (Alias, URI columns).
+    Connects to each target over SSL and retrieves its certificate.
+    Returns a certificates CSV ready to be passed to /import-csv.
+    """
+    try:
+        if not request.targets_csv.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="targets_csv must not be empty"
+            )
+
+        total, scanned, failed, certs_csv, filename, raw_results = ScannerService.scan_targets(
+            targets_csv=request.targets_csv,
+            timeout=request.timeout or 5.0,
+            insecure=request.insecure or False,
+        )
+
+        results = [
+            ScanResult(
+                alias=r["alias"],
+                uri=r["uri"],
+                success=r["success"],
+                cert_b64=r.get("cert_b64"),
+                error=r.get("error"),
+            )
+            for r in raw_results
+        ]
+
+        return ScanResponse(
+            total_targets=total,
+            scanned=scanned,
+            failed=failed,
+            certificates_csv=certs_csv,
+            filename=filename,
+            results=results,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Scan failed: {str(e)}"
+        )
+
+
 @router.get("/stats", response_model=ScannerStats)
 async def get_scanner_stats(
     db: Session = Depends(get_db)
@@ -239,8 +297,8 @@ async def get_scanner_stats(
         return ScannerStats(
             total_targets_generated=0,
             total_certificates_imported=0,
-            last_generation_time=None,
-            last_import_time=None
+            last_generation_date=None,
+            last_import_date=None
         )
         
     except Exception as e:

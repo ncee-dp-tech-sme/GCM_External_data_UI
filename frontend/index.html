@@ -470,7 +470,7 @@
             <div id="scannerPage" class="page">
                 <div class="page-header">
                     <h2>Disconnected Scanner</h2>
-                    <p class="subtitle">Generate scan targets and import certificates from CSV</p>
+                    <p class="subtitle">Generate scan targets, scan for SSL certificates, and import into GCM</p>
                 </div>
 
                 <!-- Step Indicators -->
@@ -481,6 +481,10 @@
                     </div>
                     <div class="step-indicator" data-step="2" onclick="scannerModule.showStep(2)" style="cursor: pointer;">
                         <div class="step-number">2</div>
+                        <div class="step-label">Scan Targets</div>
+                    </div>
+                    <div class="step-indicator" data-step="3" onclick="scannerModule.showStep(3)" style="cursor: pointer;">
+                        <div class="step-number">3</div>
                         <div class="step-label">Import Certificates</div>
                     </div>
                 </div>
@@ -489,7 +493,7 @@
                 <div id="scanner-step-1" class="scanner-step">
                     <div class="scanner-section">
                         <h3>Step 1: Generate Scan Targets (Optional)</h3>
-                        <p>Define IP ranges, hosts, and ports to generate a CSV file of scan targets. Or skip to <a href="#" onclick="scannerModule.showStep(2); return false;" style="color: var(--primary-color);">Step 2</a> to upload an existing CSV file.</p>
+                        <p>Define IP ranges, hosts, and ports to generate a CSV file of scan targets. Or skip to <a href="#" onclick="scannerModule.showStep(2); return false;" style="color: var(--primary-color);">Step 2</a> to upload an existing targets CSV.</p>
 
                         <div class="form-section">
                             <div class="form-group">
@@ -530,18 +534,56 @@
                             </div>
                             <div class="result-actions">
                                 <button id="download-csv-btn" class="btn btn-success">⬇️ Download CSV</button>
-                                <button id="next-step-btn" class="btn btn-primary" disabled>Next: Import Certificates →</button>
+                                <button id="next-step-btn" class="btn btn-primary" disabled>Next: Scan Targets →</button>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Step 2: Import Certificates -->
+                <!-- Step 2: Scan Targets -->
                 <div id="scanner-step-2" class="scanner-step" style="display: none;">
                     <div class="scanner-section">
-                        <h3>Step 2: Import Certificates from CSV</h3>
-                        <p>Upload a CSV file containing certificate data to import into GCM. You can use a CSV generated from Step 1, or upload any CSV file with the correct format.</p>
-                        
+                        <h3>Step 2: Scan Targets for SSL Certificates</h3>
+                        <p>Connect to each target and retrieve its SSL certificate. You can use the generated targets CSV from Step 1, or upload any CSV with <strong>Alias</strong> and <strong>URI</strong> columns.</p>
+
+                        <div class="form-section">
+                            <div class="form-group">
+                                <label for="scan-targets-file">Targets CSV File *</label>
+                                <input type="file" id="scan-targets-file" accept=".csv">
+                                <small>Select a targets CSV (Alias, URI columns). Leave empty to use the CSV generated in Step 1.</small>
+                            </div>
+
+                            <div class="form-group" style="display: flex; gap: 16px; align-items: flex-end;">
+                                <div style="flex: 1;">
+                                    <label for="scan-timeout">Timeout (seconds)</label>
+                                    <input type="number" id="scan-timeout" value="5" min="1" max="60">
+                                    <small>Per-target connection timeout</small>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 8px; padding-bottom: 20px;">
+                                    <input type="checkbox" id="scan-insecure" style="width: auto;">
+                                    <label for="scan-insecure" style="margin: 0;">Allow self-signed certificates</label>
+                                </div>
+                            </div>
+
+                            <div class="form-actions">
+                                <button id="prev-scan-btn" class="btn btn-secondary">← Back to Generate</button>
+                                <button id="run-scan-btn" class="btn btn-primary">🔍 Run Scan</button>
+                            </div>
+                        </div>
+
+                        <!-- Scan Results -->
+                        <div id="scan-results" class="result-section" style="display: none;">
+                            <!-- Scan results rendered by JS -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 3: Import Certificates -->
+                <div id="scanner-step-3" class="scanner-step" style="display: none;">
+                    <div class="scanner-section">
+                        <h3>Step 3: Import Certificates into GCM</h3>
+                        <p>Upload a CSV file containing certificate data to import into GCM. You can use the certificates CSV from Step 2, or upload any CSV file with the correct format.</p>
+
                         <div class="info-box" style="background: #e3f2fd; padding: 12px; border-radius: 4px; margin-bottom: 20px;">
                             <strong>📋 CSV Format Required:</strong>
                             <ul style="margin: 8px 0 0 20px;">
@@ -555,8 +597,8 @@
                         <div class="form-section">
                             <div class="form-group">
                                 <label for="csv-file-input">CSV File *</label>
-                                <input type="file" id="csv-file-input" accept=".csv" required>
-                                <small>Select a CSV file with columns: Alias, Certdata, URI (optional)</small>
+                                <input type="file" id="csv-file-input" accept=".csv">
+                                <small>Select a certificates CSV (Alias, Certdata, URI). Leave empty to use the CSV from Step 2.</small>
                             </div>
 
                             <!-- Validation Results -->
@@ -565,7 +607,7 @@
                             </div>
 
                             <div class="form-actions">
-                                <button id="prev-step-btn" class="btn btn-secondary">← Back to Generate</button>
+                                <button id="prev-step-btn" class="btn btn-secondary">← Back to Scan</button>
                                 <button id="import-csv-btn" class="btn btn-primary" disabled>📤 Import Certificates</button>
                             </div>
                         </div>
@@ -753,7 +795,7 @@
     <script src="/js/ui.js?v=2"></script>
     <script src="/js/certificates.js?v=2"></script>
     <script src="/js/assets.js?v=2"></script>
-    <script src="/js/scanner.js?v=2"></script>
+    <script src="/js/scanner.js?v=3"></script>
     <script src="/js/app.js?v=2"></script>
 </body>
 </html>

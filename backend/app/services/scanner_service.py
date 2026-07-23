@@ -7,14 +7,19 @@ Last Modified: 2026-06-02 17:18 UTC - Fixed CSV validation to handle case-insens
 Last Modified: 2026-06-02 17:30 UTC - Fixed certificate import to use correct API endpoint and request format
 Last Modified: 2026-07-23 00:00 UTC - import_certificates_from_csv now accepts auth_headers dict instead of
                                        access_token string to support API key authentication.
+Last Modified: 2026-07-25 00:00 UTC - Added scan_targets() method that fetches SSL certs from a target list CSV.
 """
 
 import sys
 import os
 import csv
 import io
+import ssl
+import socket
+import base64
 import ipaddress
-from typing import List, Dict, Any, Tuple
+from urllib.parse import urlparse
+from typing import List, Dict, Any, Tuple, Optional
 from datetime import datetime
 
 # Add parent directory to path for imports
@@ -360,6 +365,84 @@ class ScannerService:
             errors.append(f"Import error: {str(e)}")
 
         return imported_count, failed_count, errors
+
+    @staticmethod
+    def _build_ssl_context(insecure: bool) -> ssl.SSLContext:
+        """Create an SSL context, optionally disabling verification."""
+        ctx = ssl.create_default_context()
+        if insecure:
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+
+    @staticmethod
+    def scan_targets(
+        targets_csv: str,
+        timeout: float = 5.0,
+        insecure: bool = False,
+    ) -> Tuple[int, int, int, str, str, List[Dict[str, Any]]]:
+        """
+        Fetch SSL certificates from a target list CSV.
+
+        Args:
+            targets_csv: CSV string with columns Alias, URI (output of generate_target_list)
+            timeout:     Per-target socket timeout in seconds
+            insecure:    Disable SSL verification for self-signed certificates
+
+        Returns:
+            Tuple of (total_targets, scanned, failed, certificates_csv, filename, results)
+            where results is a list of per-target dicts with keys:
+              alias, uri, success, cert_b64 (or None), error (or None)
+        """
+        ssl_ctx = ScannerService._build_ssl_context(insecure)
+        results: List[Dict[str, Any]] = []
+
+        # Parse input CSV
+        csv_file = io.StringIO(targets_csv)
+        reader = csv.DictReader(csv_file)
+        rows = list(reader)
+        total_targets = len(rows)
+
+        for row in rows:
+            uri = (row.get("URI") or row.get("url") or "").strip()
+            alias = (row.get("Alias") or "").strip()
+
+            if not uri:
+                results.append({"alias": alias, "uri": uri, "success": False, "cert_b64": None, "error": "Missing URI"})
+                continue
+
+            parsed = urlparse(uri)
+            host = parsed.hostname
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+
+            if not alias:
+                alias = f"{host}_{port}"
+
+            try:
+                with socket.create_connection((host, port), timeout=timeout) as sock:
+                    with ssl_ctx.wrap_socket(sock, server_hostname=host) as ssock:
+                        cert_der = ssock.getpeercert(binary_form=True)
+                        cert_b64 = base64.b64encode(cert_der).decode("utf-8")
+                        results.append({"alias": alias, "uri": uri, "success": True, "cert_b64": cert_b64, "error": None})
+            except Exception as exc:
+                results.append({"alias": alias, "uri": uri, "success": False, "cert_b64": None, "error": str(exc)})
+
+        scanned = sum(1 for r in results if r["success"])
+        failed = total_targets - scanned
+
+        # Build output certificates CSV
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["Alias", "Certdata", "URI (optional)"])
+        for r in results:
+            if r["success"]:
+                writer.writerow([r["alias"], r["cert_b64"], r["uri"]])
+        certificates_csv = output.getvalue()
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"certificates_{timestamp}.csv"
+
+        return total_targets, scanned, failed, certificates_csv, filename, results
 
 
 # Made with Bob

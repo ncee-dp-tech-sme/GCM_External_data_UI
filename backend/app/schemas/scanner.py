@@ -4,6 +4,7 @@ Simplified implementation for target generation and CSV import.
 
 Created: 2026-06-02
 Last Modified: 2026-06-02
+Last Modified: 2026-07-25 - Added ScanRequest / ScanResponse schemas for the run-scan endpoint
 """
 
 from typing import Optional, List
@@ -79,9 +80,50 @@ class CSVImportResponse(BaseModel):
     errors: List[str] = []
 
 
+class ScanRequest(BaseModel):
+    """Request schema for scanning a list of targets to retrieve SSL certificates."""
+
+    targets_csv: str = Field(
+        ...,
+        description="CSV content (Alias, URI) produced by generate-targets"
+    )
+    timeout: Optional[float] = Field(
+        5.0,
+        description="Per-target socket timeout in seconds"
+    )
+    insecure: Optional[bool] = Field(
+        False,
+        description="Allow self-signed / untrusted certificates on targets"
+    )
+
+
+class ScanResult(BaseModel):
+    """Result for a single scanned target."""
+
+    alias: str
+    uri: str
+    success: bool
+    cert_b64: Optional[str] = None
+    error: Optional[str] = None
+
+
+class ScanResponse(BaseModel):
+    """Response schema for the run-scan endpoint."""
+
+    total_targets: int
+    scanned: int
+    failed: int
+    certificates_csv: str = Field(
+        ...,
+        description="Certificates CSV (Alias, Certdata, URI) ready for the import step"
+    )
+    filename: str
+    results: List[ScanResult] = []
+
+
 class ScannerStats(BaseModel):
     """Statistics for scanner operations."""
-    
+
     total_targets_generated: int = 0
     total_certificates_imported: int = 0
     last_generation_date: Optional[str] = None

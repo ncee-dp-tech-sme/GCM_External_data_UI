@@ -1,11 +1,11 @@
 # GCM Web UI - Distribution Package
 
-**Version:** 1.2.0
+**Version:** 1.3.0
 **Last Updated:** 2026-07-25
 
 ## Overview
 
-This is a distributable package of the GCM (Guardium Cryptography Manager) Web UI application. It provides a complete web-based interface for managing GCM operations including certificate management, IT asset management, profile management, and authentication. Additional features for user management and disconnected scanning are planned for future releases.
+This is a distributable package of the GCM (Guardium Cryptography Manager) Web UI application. It provides a complete web-based interface for managing GCM operations including certificate management, IT asset management, profile management, authentication, and disconnected SSL certificate scanning. User management features are planned for a future release.
 
 ## What's Included
 
@@ -28,11 +28,11 @@ This package contains:
 - 🖥️ **IT Asset Management**: Create, sync, and manage IT assets — all GCM fields captured including security metrics, protocol versions, and service details
 - 📈 **Visual Analytics**: Real-time charts and statistics
 - 🔒 **Security**: Encrypted credential storage with Fernet encryption
+- 🔍 **Disconnected Scanner**: Three-step workflow — generate target lists, scan hosts for SSL certificates, and bulk-import results into GCM
 
 ### Coming Soon
 
 - 👥 **User Management**: Keycloak user creation and management *(Future Addition)*
-- 🔍 **Disconnected Scanner**: Certificate discovery in air-gapped environments *(In Progress)*
 
 ## Prerequisites
 
@@ -299,6 +299,46 @@ The sync captures all GCM asset fields using the confirmed payload:
 - Protocol versions shown as comma-separated list
 - PQC readiness, violation counts, and exploitability score shown with colour-coded badges
 
+### Disconnected Scanner
+
+The scanner page provides a guided three-step workflow for discovering and importing SSL certificates from hosts that may not be directly reachable from GCM.
+
+**Step 1 — Generate Targets (Optional)**
+1. Go to the **Scanner** tab.
+2. Enter IP ranges (CIDR or wildcard, e.g. `192.168.1.0/24`, `10.0.0.*`), hostnames, and ports.
+3. Click **Generate Targets** to produce a `Alias, URI` CSV.
+4. Download the CSV or proceed directly to Step 2.
+
+**Step 2 — Scan Targets**
+1. Optionally upload a targets CSV (must have `Alias` and `URI` columns). Leave the file input empty to reuse the CSV generated in Step 1.
+2. Set the per-target **timeout** (default: 5 seconds).
+3. Enable **Allow self-signed certificates** if targets use untrusted certificates.
+4. Click **Run Scan**. The backend connects to each `host:port` over SSL, retrieves the DER-encoded certificate, and base64-encodes it.
+5. View the per-target summary. Download the resulting `Alias, Certdata, URI` certificates CSV.
+
+**Step 3 — Import Certificates**
+1. Optionally upload a certificates CSV. Leave empty to use the CSV produced by Step 2.
+2. Click **Import Certificates**. Each row is validated then posted to the GCM certificate ingest API using the active profile's credentials.
+3. Review the import summary (imported / failed counts and any errors).
+
+**CSV formats:**
+
+| Step | Required columns | Optional columns |
+|------|-----------------|-----------------|
+| Targets (input to Step 2) | `Alias`, `URI` | — |
+| Certificates (output of Step 2 / input to Step 3) | `Alias`, `Certdata` | `URI (optional)` |
+
+> **Tip:** Use [`disconnected-scanner/convert_certs_into_csv.py`](disconnected-scanner/convert_certs_into_csv.py) to convert local PEM/DER certificate files into the certificates CSV format instead of running a live scan.
+
+**Backend API endpoints:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/scanner/generate-targets` | Expand IP/host/port inputs into a targets CSV |
+| `POST` | `/api/v1/scanner/run-scan` | Scan targets and retrieve SSL certificates |
+| `POST` | `/api/v1/scanner/validate-csv` | Validate a certificates CSV before import |
+| `POST` | `/api/v1/scanner/import-csv` | Import certificates from CSV into GCM |
+
 ### Database Migrations
 
 The application runs zero-downtime column migrations on every startup via `migrate_db()` in [`backend/app/database.py`](backend/app/database.py). New columns are added with `ALTER TABLE … ADD COLUMN` and silently skipped if they already exist. **No manual migration steps are required when upgrading.**
@@ -344,9 +384,10 @@ dist/
 │   ├── register_oidc_user.py
 │   └── list_users.py
 └── disconnected-scanner/        # Scanner utilities
-    ├── get_certificates.py
-    ├── post_certificates_from_csv.py
-    └── convert_certs_into_csv.py
+    ├── gen_target_list.py           # CLI: generate scan targets CSV
+    ├── get_certificates.py          # CLI: fetch SSL certs from target list
+    ├── post_certificates_from_csv.py # CLI: post certificates CSV to GCM
+    └── convert_certs_into_csv.py   # CLI: convert PEM/DER files to CSV
 ```
 
 ## Security
@@ -576,14 +617,6 @@ The following features are planned for future releases:
 - Role assignment and permissions
 - User lifecycle management
 - Integration with GCM user directory
-
-### Disconnected Scanner
-- Certificate discovery in air-gapped environments
-- Bulk certificate scanning from target lists
-- CSV import/export for scan results
-- Automated certificate inventory updates
-
-These features are currently in development and will be included in upcoming versions. The backend API endpoints and frontend modules are partially implemented but not yet fully functional or tested.
 
 ## License
 
