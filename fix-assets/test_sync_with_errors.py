@@ -69,7 +69,7 @@ def test_sync_with_error_tracking():
         
         service = ITAssetService(db)
         
-        synced, created, updated, errors = service.sync_assets_from_gcm(
+        synced, created, updated, deleted, errors = service.sync_assets_from_gcm(
             profile_data=profile_data,
             access_token=access_token,
             asset_type="all",

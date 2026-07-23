@@ -1,4 +1,5 @@
 """
+2026-07-28T00:00:00Z - Delete stale local certificates (not present in GCM) after sync_all_certificates_from_gcm().
 2026-06-01T23:32:00Z - Initial creation of certificate service
 2026-06-02T01:27:00Z - Modified upload_certificate to sync from GCM instead of creating local entry
 2026-06-02T17:36:00Z - Fixed delete_certificates to use OR condition for serial_numbers and crypto_ids filters
@@ -267,6 +268,8 @@ class CertificateService:
         total_updated = 0
         all_errors: list = []
         page = 1
+        # Track every crypto_id returned by GCM to detect stale local records
+        all_gcm_crypto_ids: set = set()
 
         while True:
             body = {
@@ -306,6 +309,8 @@ class CertificateService:
             )
 
             for cert_data in certificates:
+                if cert_data.get("crypto_id"):
+                    all_gcm_crypto_ids.add(cert_data["crypto_id"])
                 try:
                     cert = CertificateService._sync_certificate_to_db(db, cert_data)
                     if cert:
@@ -325,10 +330,26 @@ class CertificateService:
 
             page += 1
 
+        # Delete local certificates that no longer exist in GCM
+        deleted_count = 0
+        if all_gcm_crypto_ids:
+            stale = (
+                db.query(Certificate)
+                .filter(Certificate.crypto_id.notin_(all_gcm_crypto_ids))
+                .all()
+            )
+            for stale_cert in stale:
+                db.delete(stale_cert)
+            deleted_count = len(stale)
+            if deleted_count:
+                logger.info("Deleted %d stale local certificates not present in GCM", deleted_count)
+            db.commit()
+
         return {
             "total_fetched": total_fetched,
             "synced": total_synced,
             "updated": total_updated,
+            "deleted": deleted_count,
             "errors": all_errors,
             "pages": page,
         }

@@ -259,6 +259,8 @@ You're now ready to use all features!
 2. Click **Sync from GCM**
 3. View synced certificates in the list
 
+> **Sync keeps local data in step with GCM.** After every full sync, any certificate that no longer exists on the remote server is automatically removed from the local database. The sync response includes a `deleted` count alongside `synced` and `updated`.
+
 **Upload a Certificate:**
 1. Click **Upload Certificate**
 2. Select certificate file (PEM or DER format)
@@ -275,6 +277,8 @@ You're now ready to use all features!
 1. Go to **IT Assets** tab
 2. Click **Sync from GCM**
 3. View synced assets in the list
+
+> **Sync keeps local data in step with GCM.** After every full sync, any asset that no longer exists on the remote server is automatically removed from the local database. The sync response includes a `deleted_count` alongside `synced_count`, `created_count`, and `updated_count`.
 
 The sync captures all GCM asset fields using the confirmed payload:
 

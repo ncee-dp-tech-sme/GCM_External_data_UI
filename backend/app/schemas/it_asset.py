@@ -156,6 +156,7 @@ class SyncAssetsResponse(BaseModel):
     synced_count: int
     created_count: int
     updated_count: int
+    deleted_count: int = 0
     error_count: int
     errors: List[str]
 

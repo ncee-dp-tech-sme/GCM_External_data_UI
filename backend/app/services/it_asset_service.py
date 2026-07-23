@@ -144,11 +144,14 @@ class ITAssetService:
         synced_count = 0
         created_count = 0
         updated_count = 0
+        deleted_count = 0
         errors = []
 
         # Initialize existing_assets_by_uri map ONCE for the entire sync
         # This map will be updated as new assets are created, preventing duplicates across pages
         existing_assets_by_uri = {}
+        # Track every URI returned by GCM so stale local records can be removed afterwards
+        all_gcm_uris: set = set()
 
         try:
             # For OIDC auth, call_authorization_api must be called on this client's session
@@ -232,6 +235,11 @@ class ITAssetService:
                         for asset in existing_assets:
                             existing_assets_by_uri[asset.uri] = asset
                     
+                    # Record GCM URIs for stale-record cleanup
+                    for asset_data in assets_list:
+                        if asset_data.get("uri"):
+                            all_gcm_uris.add(asset_data["uri"])
+
                     # Process each asset
                     for asset_data in assets_list:
                         try:
@@ -274,20 +282,32 @@ class ITAssetService:
                     errors.append(f"Error fetching page {page}: {str(e)}")
                     break
             
-            # Final commit is not needed since we commit after each page
-            # But we'll do a final commit to ensure any pending changes are saved
+            # Delete local assets that no longer exist in GCM
+            if all_gcm_uris:
+                stale = (
+                    self.db.query(ITAsset)
+                    .filter(ITAsset.uri.notin_(all_gcm_uris))
+                    .all()
+                )
+                for stale_asset in stale:
+                    self.db.delete(stale_asset)
+                deleted_count = len(stale)
+                if deleted_count:
+                    print(f"Deleted {deleted_count} stale local assets not present in GCM")
+
+            # Final commit — includes stale deletions
             try:
                 self.db.commit()
                 print(f"Final commit completed successfully")
             except Exception as e:
                 print(f"Final commit error (may be harmless): {str(e)}")
                 # Don't add to errors since page commits already succeeded
-            
+
         except Exception as e:
             errors.append(f"Sync error: {str(e)}")
             self.db.rollback()
-        
-        return synced_count, created_count, updated_count, errors
+
+        return synced_count, created_count, updated_count, deleted_count, errors
     
     def _sync_single_asset(
         self,

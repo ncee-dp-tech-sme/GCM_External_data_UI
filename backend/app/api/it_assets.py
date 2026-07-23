@@ -88,17 +88,18 @@ def sync_assets(
     service = ITAssetService(db)
     
     try:
-        synced, created, updated, errors = service.sync_assets_from_gcm(
+        synced, created, updated, deleted, errors = service.sync_assets_from_gcm(
             profile_data=profile_data,
             auth_headers=auth_headers,
             asset_type=request.asset_type,
             page_size=request.page_size
         )
-        
+
         return SyncAssetsResponse(
             synced_count=synced,
             created_count=created,
             updated_count=updated,
+            deleted_count=deleted,
             error_count=len(errors),
             errors=errors
         )
