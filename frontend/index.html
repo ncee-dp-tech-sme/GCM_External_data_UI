@@ -24,7 +24,7 @@
         <nav class="nav-tabs">
             <button class="nav-tab active" data-page="dashboard">📊 Dashboard</button>
             <button class="nav-tab" data-page="profiles">👤 Profiles</button>
-            <button class="nav-tab" data-page="certificates">📜 Certificates</button>
+            <button class="nav-tab" data-page="certificates">🔐 Crypto Objects</button>
             <button class="nav-tab" data-page="assets">🏢 IT Assets</button>
             <button class="nav-tab" data-page="scanner">🔍 Scanner</button>
             <button class="nav-tab" data-page="auth">🔑 Authentication</button>
@@ -223,8 +223,8 @@
             <!-- Certificates Page -->
             <div id="certificatesPage" class="page">
                 <div class="page-header">
-                    <h2>Certificate Management</h2>
-                    <p class="subtitle">Manage GCM certificate inventory</p>
+                    <h2>Cryptographic Objects</h2>
+                    <p class="subtitle">Manage GCM cryptographic object inventory</p>
                 </div>
 
                 <!-- Action Bar -->
@@ -238,9 +238,15 @@
                         </button>
                     </div>
                     <div class="action-bar-right">
-                        <input type="text" id="certSearch" placeholder="🔍 Search certificates..." class="search-input">
+                        <input type="text" id="certSearch" placeholder="🔍 Search objects..." class="search-input">
+                        <select id="certTypeFilter" class="filter-select">
+                            <option value="">All Types</option>
+                            <option value="Certificate">Certificates</option>
+                            <option value="Protocol">Protocols</option>
+                            <option value="Key">Keys</option>
+                        </select>
                         <select id="certFilter" class="filter-select">
-                            <option value="">All Certificates</option>
+                            <option value="">All Statuses</option>
                             <option value="expired">Expired</option>
                             <option value="expiring">Expiring Soon (30 days)</option>
                             <option value="valid">Valid</option>
@@ -251,9 +257,9 @@
                 <!-- Statistics Cards -->
                 <div class="stats-grid">
                     <div class="stat-card">
-                        <div class="stat-icon">📜</div>
+                        <div class="stat-icon">🔐</div>
                         <div class="stat-content">
-                            <div class="stat-label">Total Certificates</div>
+                            <div class="stat-label">Total Objects</div>
                             <div class="stat-value" id="totalCertificates">0</div>
                         </div>
                     </div>
@@ -280,13 +286,14 @@
                     </div>
                 </div>
 
-                <!-- Certificates Table -->
+                <!-- Cryptographic Objects Table -->
                 <div class="table-container">
                     <table class="data-table" id="certificatesTable">
                         <thead>
                             <tr>
                                 <th><input type="checkbox" id="selectAllCerts"></th>
                                 <th>Alias</th>
+                                <th>Type</th>
                                 <th>Subject CN</th>
                                 <th>Issuer CN</th>
                                 <th>URI</th>
@@ -298,8 +305,8 @@
                         </thead>
                         <tbody id="certificatesTableBody">
                             <tr>
-                                <td colspan="9" class="text-center">
-                                    <p class="placeholder">No certificates loaded. Click "Sync from GCM" to fetch certificates.</p>
+                                <td colspan="10" class="text-center">
+                                    <p class="placeholder">No objects loaded. Click "Sync from GCM" to fetch cryptographic objects.</p>
                                 </td>
                             </tr>
                         </tbody>
@@ -824,9 +831,9 @@
         <div id="toastContainer" class="toast-container"></div>
     </div>
 
-    <script src="/js/api.js?v=2"></script>
+    <script src="/js/api.js?v=3"></script>
     <script src="/js/ui.js?v=2"></script>
-    <script src="/js/certificates.js?v=2"></script>
+    <script src="/js/certificates.js?v=3"></script>
     <script src="/js/assets.js?v=2"></script>
     <script src="/js/scanner.js?v=6"></script>
     <script src="/js/app.js?v=2"></script>

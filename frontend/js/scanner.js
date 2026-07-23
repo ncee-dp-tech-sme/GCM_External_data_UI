@@ -20,6 +20,9 @@
  *                              simultaneously was never processed; rewrite loop to flush on stream end
  * Last Modified: 2026-07-28 - displayIngestAllResults: split GCM response bodies (OK 200) from real errors;
  *                              show GCM confirmations in collapsible details block for easier debugging
+ * Last Modified: 2026-07-28 - Add "Import All to GCM" button directly in Step 2 scan results action bar
+ *                              so users can ingest SSH keys + TLS protocols without navigating to Step 3;
+ *                              button calls handleIngestAll() and is shown after scan completes.
  */
 
 // Scanner state
@@ -621,6 +624,7 @@ function updateLiveResultsTable(r, host, port) {
 
 /**
  * Add the action buttons row above the table once the scan is done.
+ * Includes inline "Import All to GCM" button when there are SSH/TLS results.
  */
 function finalizeScanResultsTable(event) {
     const div = document.getElementById('scan-results');
@@ -630,6 +634,17 @@ function finalizeScanResultsTable(event) {
     // Remove old action bar if present
     const old = document.getElementById('scan-actions-bar');
     if (old) old.remove();
+
+    // Determine whether there is anything to ingest directly (SSH keys or TLS protocols).
+    // Show the button whenever the scan completed with at least one successful probe — the
+    // backend filters to only SSH/TLS objects at ingest time.
+    const hasIngestable = scannerState.scanResults && scannerState.scanResults.some(
+        r => r.success
+    );
+
+    const ingestBtn = hasIngestable
+        ? `<button class="btn btn-primary" onclick="handleIngestAll(this)">📤 Import All to GCM</button>`
+        : '';
 
     const bar = document.createElement('div');
     bar.id = 'scan-actions-bar';
@@ -644,8 +659,10 @@ function finalizeScanResultsTable(event) {
         </div>
         <div class="result-actions">
             <button class="btn btn-success" onclick="downloadScannedCSV()">⬇️ Download Certificates CSV</button>
-            <button class="btn btn-primary" onclick="showScannerStep(3)">Next: Import Certificates →</button>
-        </div>`;
+            ${ingestBtn}
+            <button class="btn btn-secondary" onclick="showScannerStep(3)">Next: Import Certificates →</button>
+        </div>
+        <div id="scan-step2-ingest-results" style="display:none; margin-top:14px;"></div>`;
     div.insertBefore(bar, div.firstChild);
 }
 
@@ -797,17 +814,18 @@ async function handleImportCSV() {
 
 /**
  * Import all scan results to GCM: certificates (CSV) + SSH keys + TLS protocols.
+ * Can be triggered from Step 2 action bar or Step 3 ingest panel.
  */
-async function handleIngestAll() {
+async function handleIngestAll(triggerBtn) {
     if (!scannerState.scanResults || scannerState.scanResults.length === 0) {
         showNotification('No scan results in memory. Please run a scan first.', 'error');
         return;
     }
 
-    const btn = document.getElementById('ingest-all-btn');
-    const originalText = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = 'Importing…';
+    // Support calls from Step 2 inline button (no fixed id) and Step 3 button (#ingest-all-btn)
+    const btn = triggerBtn || document.getElementById('ingest-all-btn');
+    const originalText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
 
     try {
         // 1. Import TLS certificates via existing CSV endpoint
@@ -861,18 +879,23 @@ async function handleIngestAll() {
         console.error('Ingest all failed:', error);
         showNotification(error.message || 'Import failed', 'error');
     } finally {
-        btn.disabled = false;
-        btn.textContent = originalText;
+        if (btn) { btn.disabled = false; btn.textContent = originalText; }
     }
 }
 
 /**
- * Display combined ingest-all results (Step 3).
- * The errors list from the backend now also contains "OK 200 — <gcm body>" lines for
- * successful requests, so we split them into responses vs actual errors for display.
+ * Display combined ingest-all results.
+ * Writes to #scan-step2-ingest-results (Step 2 inline) when present and visible,
+ * otherwise falls back to #import-results (Step 3). Splits GCM OK responses from errors.
  */
 function displayIngestAllResults(certResult, ingestResult) {
-    const resultsDiv = document.getElementById('import-results');
+    // Prefer the Step 2 inline results div when the scan results bar is visible
+    const step2Div = document.getElementById('scan-step2-ingest-results');
+    const step3Div = document.getElementById('import-results');
+    const resultsDiv = (step2Div && document.getElementById('scan-results') &&
+                        document.getElementById('scan-results').style.display !== 'none')
+        ? step2Div
+        : step3Div;
     if (!resultsDiv) return;
 
     const row = (label, ok, fail) =>

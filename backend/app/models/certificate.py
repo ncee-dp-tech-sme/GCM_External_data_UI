@@ -2,6 +2,7 @@
 2026-06-01T23:31:00Z - Initial creation of certificate model
 2026-07-25T00:10:00Z - Added missing GCM fields: certificate_validity_period, is_short_lived,
                        san (JSON), is_exception, group_updated_at, gcm_created_at, gcm_updated_at
+2026-07-29T00:00:00Z - Added object_type column to store GCM crypto_object_type (Certificate/Key/Protocol)
 Certificate database model for GCM certificate inventory
 Stores certificate metadata and relationships
 """
@@ -45,6 +46,9 @@ class Certificate(Base):
     signature_algorithm = Column(String(100), nullable=True)
     key_size = Column(Integer, nullable=True)
     
+    # Crypto object type from GCM (e.g. Certificate, Key, Protocol)
+    object_type = Column(String(100), index=True, nullable=True)
+
     # Relationships
     uri = Column(String(500), index=True, nullable=True)
     asset_type = Column(String(100), nullable=True)

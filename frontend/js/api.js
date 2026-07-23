@@ -123,6 +123,7 @@ class APIClient {
         if (filters.issuer_cn) params.append('issuer_cn', filters.issuer_cn);
         if (filters.is_expired !== undefined) params.append('is_expired', filters.is_expired);
         if (filters.expiring_days) params.append('expiring_days', filters.expiring_days);
+        if (filters.object_type) params.append('object_type', filters.object_type);
         if (filters.page) params.append('page', filters.page);
         if (filters.page_size) params.append('page_size', filters.page_size);
         if (filters.sort_by) params.append('sort_by', filters.sort_by);

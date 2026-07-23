@@ -1,5 +1,6 @@
 // 2026-06-02T00:02:00Z - Created certificate management functions for GCM Web UI
 // 2026-07-25T00:10:00Z - Added SAN table, Validity & Flags section, and GCM timestamps to details modal
+// 2026-07-29T00:00:00Z - Added certTypeFilter (object type) dropdown; added Type column to table; renamed page labels
 
 /**
  * Certificate Management Functions
@@ -41,7 +42,7 @@ function setupCertificateEventListeners() {
         searchInput.dataset.listenerAdded = 'true';
     }
     
-    // Filter select
+    // Status filter select
     const filterSelect = document.getElementById('certFilter');
     if (filterSelect && !filterSelect.dataset.listenerAdded) {
         filterSelect.addEventListener('change', () => {
@@ -49,6 +50,16 @@ function setupCertificateEventListeners() {
             loadCertificatesList();
         });
         filterSelect.dataset.listenerAdded = 'true';
+    }
+
+    // Type filter select
+    const typeFilterSelect = document.getElementById('certTypeFilter');
+    if (typeFilterSelect && !typeFilterSelect.dataset.listenerAdded) {
+        typeFilterSelect.addEventListener('change', () => {
+            currentPage = 1;
+            loadCertificatesList();
+        });
+        typeFilterSelect.dataset.listenerAdded = 'true';
     }
     
     // Pagination buttons
@@ -130,7 +141,7 @@ async function loadCertificatesList() {
             filters.search = searchValue;
         }
         
-        // Add filter
+        // Add status filter
         const filterValue = document.getElementById('certFilter')?.value;
         if (filterValue === 'expired') {
             filters.is_expired = true;
@@ -138,6 +149,12 @@ async function loadCertificatesList() {
             filters.expiring_days = 30;
         } else if (filterValue === 'valid') {
             filters.is_expired = false;
+        }
+
+        // Add object type filter
+        const typeFilterValue = document.getElementById('certTypeFilter')?.value;
+        if (typeFilterValue) {
+            filters.object_type = typeFilterValue;
         }
         
         currentFilters = filters;
@@ -166,8 +183,8 @@ function renderCertificatesTable(certificates) {
     if (certificates.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="9" class="text-center">
-                    <p class="placeholder">No certificates found. Try adjusting your filters or sync from GCM.</p>
+                <td colspan="10" class="text-center">
+                    <p class="placeholder">No objects found. Try adjusting your filters or sync from GCM.</p>
                 </td>
             </tr>
         `;
@@ -177,11 +194,13 @@ function renderCertificatesTable(certificates) {
     tbody.innerHTML = certificates.map(cert => {
         const status = getCertificateStatus(cert);
         const statusBadge = `<span class="badge ${status.class}">${status.text}</span>`;
+        const objectType = cert.object_type || 'N/A';
         
         return `
             <tr>
                 <td><input type="checkbox" class="cert-checkbox" data-id="${cert.id}"></td>
                 <td>${cert.alias || 'N/A'}</td>
+                <td>${objectType}</td>
                 <td>${truncate(cert.subject_cn || cert.subject || 'N/A', 30)}</td>
                 <td>${truncate(cert.issuer_cn || cert.issuer || 'N/A', 30)}</td>
                 <td>${truncate(cert.uri || 'N/A', 40)}</td>

@@ -1,4 +1,8 @@
 """
+2026-07-29T00:00:00Z - Capture GCM crypto_object_type into object_type column; add object_type filter to list_certificates().
+2026-07-28T00:06:00Z - Fix stale-delete in sync_all_certificates_from_gcm(): extend filter to also remove
+                       rows where crypto_id IS NULL (NULL NOT IN (...) evaluates NULL in SQL, so NULL-id
+                       rows survived every sync and inflated the local count vs GCM).
 2026-07-28T00:00:00Z - Delete stale local certificates (not present in GCM) after sync_all_certificates_from_gcm().
 2026-06-01T23:32:00Z - Initial creation of certificate service
 2026-06-02T01:27:00Z - Modified upload_certificate to sync from GCM instead of creating local entry
@@ -330,12 +334,22 @@ class CertificateService:
 
             page += 1
 
-        # Delete local certificates that no longer exist in GCM
+        # Delete local certificates that no longer exist in GCM.
+        # Two cases to handle:
+        #   1. crypto_id is set but not in GCM's response  → stale/deleted on GCM side
+        #   2. crypto_id IS NULL                           → orphan row (upload fallback,
+        #      manual insert, etc.); SQL NULL NOT IN (...) is NULL, not TRUE, so these
+        #      were never matched by the old notin_() filter and kept inflating local count.
         deleted_count = 0
         if all_gcm_crypto_ids:
             stale = (
                 db.query(Certificate)
-                .filter(Certificate.crypto_id.notin_(all_gcm_crypto_ids))
+                .filter(
+                    or_(
+                        Certificate.crypto_id.is_(None),
+                        Certificate.crypto_id.notin_(all_gcm_crypto_ids),
+                    )
+                )
                 .all()
             )
             for stale_cert in stale:
@@ -442,6 +456,9 @@ class CertificateService:
         cert.fingerprint_sha256 = cert_data.get("fingerprint_sha256")
         cert.version = cert_data.get("format_version") or cert_data.get("version")
         
+        # Crypto object type (e.g. "Certificate", "Key", "Protocol")
+        cert.object_type = cert_data.get("crypto_object_type") or cert_data.get("object_type")
+
         # Handle relationships
         relationships = cert_data.get("relationships", [])
         if relationships:
@@ -565,6 +582,9 @@ class CertificateService:
                     Certificate.days_until_expiry >= 0
                 )
             )
+
+        if filters.object_type:
+            query = query.filter(Certificate.object_type.ilike(f"%{filters.object_type}%"))
         
         # Get total count before pagination
         total = query.count()

@@ -1,6 +1,7 @@
 """
 2026-06-01T23:31:00Z - Initial creation of certificate schemas
 2026-07-25T00:10:00Z - Added new fields to CertificateResponse: certificate_validity_period,
+2026-07-29T00:00:00Z - Added object_type to CertificateResponse and CertificateFilter
                        is_short_lived, is_exception, san, gcm_created_at, gcm_updated_at,
                        group_updated_at
 Certificate Pydantic schemas for API request/response validation
@@ -56,6 +57,9 @@ class CertificateResponse(CertificateBase):
     asset_type: Optional[str] = None
     version: Optional[int] = None
     
+    # Crypto object type (Certificate, Key, Protocol)
+    object_type: Optional[str] = None
+
     # GCM-specific fields
     certificate_status: Optional[str] = None
     is_ca_certificate: Optional[bool] = None
@@ -112,6 +116,7 @@ class CertificateFilter(BaseModel):
     issuer_cn: Optional[str] = Field(None, description="Filter by issuer CN")
     is_expired: Optional[bool] = Field(None, description="Filter by expiry status")
     expiring_days: Optional[int] = Field(None, description="Filter certificates expiring within N days")
+    object_type: Optional[str] = Field(None, description="Filter by crypto object type (Certificate, Key, Protocol)")
     page: int = Field(1, ge=1, description="Page number")
     page_size: int = Field(10, ge=1, le=100, description="Items per page")
     sort_by: Optional[str] = Field("created_at", description="Sort field")

@@ -1,7 +1,7 @@
 # GCM Web UI - Distribution Package
 
-**Version:** 1.3.2
-**Last Updated:** 2026-07-28
+**Version:** 1.3.3
+**Last Updated:** 2026-07-29
 
 ## Overview
 
@@ -322,7 +322,8 @@ The scanner page provides a guided three-step workflow for discovering and impor
    - Click **Stop Scan** at any time to halt after the current target finishes.
 5. Results appear row-by-row as each probe completes. When the scan finishes, action buttons appear above the results table:
    - **⬇️ Download Certificates CSV** — saves the `Alias, Certdata, URI` CSV for offline use.
-   - **Next: Import Certificates →** — navigates to Step 3.
+   - **📤 Import All to GCM** — immediately ingests all SSH host keys, TLS protocols, and certificates without leaving Step 2. Only appears when at least one probe succeeded.
+   - **Next: Import Certificates →** — navigates to Step 3 for the full import panel.
 
 **Protocol detection per target:**
 
@@ -355,10 +356,10 @@ When a scan was run in Step 2, a summary shows the number of each object type re
 | Object type | GCM API | What is sent |
 |---|---|---|
 | **Certificates** | `POST /v1/…/crypto_objects/certificate_from_file` | Base64 DER certificate, alias, IT asset URI |
-| **SSH Host Keys** | `POST /v2/…/crypto_objects/keys` | Key algorithm, estimated key length, advertised algorithms (in extensions), IT asset relationship |
-| **TLS Protocols** | `POST /v2/…/crypto_objects/protocols` | TLS version, cipher suite, IT asset URI |
+| **SSH Host Keys** | `POST /v2/…/crypto_objects/keys` | Key algorithm, estimated key length, IT asset URI, `relationship_type: HOSTED_ON`, relationships block |
+| **TLS Protocols** | `POST /v2/…/crypto_objects/protocols` | TLS version, cipher suite, IT asset URI, `relationship_type: HOSTED_ON` |
 
-Before each crypto-object POST, the importer automatically upserts a minimal IT asset record for the target URI (`POST /v2/…/ingest/it_assets`) so that GCM can resolve the `it_asset_uri` reference. This prevents the `"Unique Identifier not found"` skip that occurs when a host has no existing IT asset entry in GCM.
+Before each crypto-object POST, the importer automatically upserts a minimal IT asset record for the target URI (`POST /v2/…/ingest/it_assets`) so that GCM can resolve the `it_asset_uri` reference. The key and protocol payloads also carry an explicit `relationships` block so GCM can link the crypto object to the IT asset without a separate lookup — preventing `"Unique Identifier not found"` skips.
 
 After import, a results table shows **Imported** and **Failed** counts per object type. Expand the **GCM responses** collapsible section to see the raw GCM response body for every per-object API call — useful for diagnosing any remaining issues.
 
@@ -528,16 +529,27 @@ rm gcm_webui.db
 uvicorn app.main:app --reload  # Will recreate database
 ```
 
-### Scanner: Objects Show as Imported but Are Not Visible in GCM
+### Scanner: SSH Keys Skipped with "Unique Identifier not found"
 
-**Problem**: After clicking **📤 Import All to GCM** the results table shows non-zero **Imported** counts for SSH host keys or TLS protocols, but the objects do not appear in the GCM inventory, and the GCM responses panel shows `"Unique Identifier not found"`.
+**Problem**: After clicking **📤 Import All to GCM** the GCM responses panel shows:
+```
+{"message":"No Data to Ingest","it_assets":{},"crypto_object_keys":{"skipped":[{"index":1,"message":"Unique Identifier not found"}]}}
+```
 
-**Cause (fixed in v1.3.2)**: GCM's crypto-object ingest APIs require a pre-existing IT asset record that matches the `it_asset_uri` field. The importer now automatically creates that asset before each object POST, so this should no longer occur.
+**Cause (fixed in v1.3.3)**: GCM's `/v2/…/crypto_objects/keys` API requires an explicit `relationships` block and `relationship_type: HOSTED_ON` in the key payload to link the key to its IT asset. Earlier versions sent only a flat `it_asset_uri` field, which GCM could not resolve. The importer now includes the full relationships block alongside `it_asset_uri`.
 
 **If it still happens**:
 1. Expand the **GCM responses** collapsible section — look for `[asset]:` prefixed lines that indicate the IT asset upsert itself failed.
 2. Check that the GCM profile has permission to write IT assets (`POST /v2/assets/ingest/it_assets`).
-3. Verify the URI format in the scan targets CSV is reachable/parseable (must include scheme, e.g. `https://host:443`).
+3. Verify the URI format includes the correct scheme: SSH ports (22, 2222, 22222) must use `ssh://`, all others `https://`. The scanner generates correct URIs automatically — check any manually-created targets CSV.
+
+### Scanner: "Import All to GCM" Button Missing on Step 2
+
+**Problem**: After a scan completes, the **📤 Import All to GCM** button does not appear above the results table.
+
+**Cause (fixed in v1.3.3)**: The button was only shown when at least one result matched a strict service-type check (`service === 'ssh'` or `service === 'tls'` with a version). Results arriving via the banner-detection fallback path could have a slightly different shape that skipped the check. The condition now shows the button whenever any probe returned `success: true`.
+
+**If the button still does not appear**: all probed targets timed out or were unreachable. Verify the targets are reachable from the host running the backend and increase the timeout if needed.
 
 ### Port Already in Use
 

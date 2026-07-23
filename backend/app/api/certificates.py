@@ -4,6 +4,7 @@ Certificate management API endpoints
 Handles CRUD operations for GCM certificate inventory
 2026-07-25T00:04:00Z - Added /debug-gcm probe endpoint for diagnosing GCM connectivity and filter issues.
 2026-07-25T12:30:00Z - Added /sync/all endpoint that paginates GCM until exhausted.
+2026-07-29T00:00:00Z - Added object_type query parameter to list_certificates endpoint.
 """
 
 from fastapi import APIRouter, Depends, status, Query
@@ -109,6 +110,7 @@ def list_certificates(
     issuer_cn: Optional[str] = Query(None, description="Filter by issuer CN"),
     is_expired: Optional[bool] = Query(None, description="Filter by expiry status"),
     expiring_days: Optional[int] = Query(None, ge=0, description="Filter certificates expiring within N days"),
+    object_type: Optional[str] = Query(None, description="Filter by crypto object type (Certificate, Key, Protocol)"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(10, ge=1, le=100, description="Items per page"),
     sort_by: str = Query("created_at", description="Sort field"),
@@ -142,6 +144,7 @@ def list_certificates(
         issuer_cn=issuer_cn,
         is_expired=is_expired,
         expiring_days=expiring_days,
+        object_type=object_type,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
