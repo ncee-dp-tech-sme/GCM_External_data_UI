@@ -1,7 +1,7 @@
 # GCM Web UI - Distribution Package
 
 **Version:** 1.3.4
-**Last Updated:** 2026-07-29
+**Last Updated:** 2026-07-23
 
 ## Overview
 
