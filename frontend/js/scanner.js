@@ -16,6 +16,8 @@
  * Last Modified: 2026-07-25 - Fix Host:Port column showing "?" for default ports by passing host/port directly from SSE event
  * Last Modified: 2026-07-25 - Add handleIngestAll() to import certs + SSH keys + TLS protocols; wire ingest-all-btn;
  *                              populate ingest-from-scan panel on Step 3 with object counts
+ * Last Modified: 2026-07-25 - Fix SSE buffer flush: 'done' event stranded in buffer when stream closes
+ *                              simultaneously was never processed; rewrite loop to flush on stream end
  */
 
 // Scanner state
@@ -361,35 +363,49 @@ async function handleRunScan() {
         const decoder = new TextDecoder();
         let buffer = '';
 
+        // Process one SSE line, returning true if a 'done' event was handled.
+        function processLine(line) {
+            if (!line.startsWith('data:')) return false;
+            const raw = line.slice(5).trim();
+            if (!raw) return false;
+            let event;
+            try { event = JSON.parse(raw); } catch { return false; }
+
+            if (event.type === 'scanning') {
+                updateScanProgress(event.index, event.total, event.host, event.port);
+            } else if (event.type === 'progress') {
+                updateScanProgress(event.index, event.total, event.host, event.port);
+                if (event.result) {
+                    scannerState.scanResults.push(event.result);
+                    updateLiveResultsTable(event.result, event.host, event.port);
+                }
+            } else if (event.type === 'done') {
+                handleScanDone(event);
+                return true;
+            }
+            return false;
+        }
+
         while (true) {
             const { done, value } = await reader.read();
-            if (done) break;
 
-            buffer += decoder.decode(value, { stream: true });
+            // Flush any remaining bytes from the decoder and append to buffer
+            const chunk = done
+                ? decoder.decode()          // flush final bytes
+                : decoder.decode(value, { stream: true });
+            buffer += chunk;
+
             const lines = buffer.split('\n');
-            buffer = lines.pop(); // keep incomplete line
+            // If the stream is still open keep the last incomplete line in the
+            // buffer; if it's closed treat every line as complete.
+            buffer = done ? '' : lines.pop();
 
+            let finished = false;
             for (const line of lines) {
-                if (!line.startsWith('data:')) continue;
-                const raw = line.slice(5).trim();
-                if (!raw) continue;
-
-                let event;
-                try { event = JSON.parse(raw); } catch { continue; }
-
-                if (event.type === 'scanning') {
-                    updateScanProgress(event.index, event.total, event.host, event.port);
-                } else if (event.type === 'progress') {
-                    updateScanProgress(event.index, event.total, event.host, event.port);
-                    if (event.result) {
-                        scannerState.scanResults.push(event.result);
-                        updateLiveResultsTable(event.result, event.host, event.port);
-                    }
-                } else if (event.type === 'done') {
-                    handleScanDone(event);
-                    break;
-                }
+                if (processLine(line)) { finished = true; break; }
             }
+
+            if (done || finished) break;
         }
 
     } catch (error) {

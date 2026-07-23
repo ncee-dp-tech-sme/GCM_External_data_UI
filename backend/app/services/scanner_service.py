@@ -21,6 +21,10 @@ Last Modified: 2026-07-25 00:01 UTC - Added SSH alternative ports 2222/22222 to 
                                        comma-separated algorithm list for clearer UI display.
 Last Modified: 2026-07-25 00:02 UTC - Added ingest_keys_from_results() for SSH host keys to GCM /v2/keys
                                        and ingest_protocols_from_results() for TLS to GCM /v2/protocols.
+Last Modified: 2026-07-25 00:03 UTC - Add port 2222/22222 to _PORT_SERVICE_HINTS so probe_target takes the
+                                       direct SSH path; normalise SSH wire key type to clean GCM algorithm
+                                       name (RSA/ECDSA/Ed25519); drop enum fields (key_type, key_usage,
+                                       origin_source) that GCM may reject as unknown values.
 """
 
 import sys
@@ -68,6 +72,8 @@ _BANNER_SIGNATURES: List[Tuple[bytes, str]] = [
 _PORT_SERVICE_HINTS: Dict[int, str] = {
     21:   "ftp",
     22:   "ssh",
+    2222: "ssh",
+    22222:"ssh",
     25:   "smtp",
     110:  "pop3",
     143:  "imap",
@@ -466,44 +472,48 @@ class ScannerService:
             for r in ssh_results:
                 alias    = r.get("alias", "")
                 uri      = r.get("uri", "")
-                key_type = r.get("ssh_host_key_type", "")
+                key_type = r.get("ssh_host_key_type", "")   # e.g. "rsa-sha2-512", "ssh-rsa", "ecdsa-sha2-nistp256"
                 alg_list = r.get("ssh_host_key_fingerprint", "")  # comma-sep algorithm string
 
-                # Estimate key length from key type name
-                key_length = 0
-                if "rsa" in key_type:
-                    key_length = 2048  # conservative default; actual bits not captured in handshake
-                elif "ed25519" in key_type:
+                # Normalise SSH wire-format key type → clean algorithm name for GCM
+                if "ed25519" in key_type:
+                    gcm_algorithm = "Ed25519"
                     key_length = 256
-                elif "nistp256" in key_type or "p256" in key_type:
-                    key_length = 256
-                elif "nistp384" in key_type or "p384" in key_type:
-                    key_length = 384
-                elif "nistp521" in key_type or "p521" in key_type:
-                    key_length = 521
+                elif "rsa" in key_type:
+                    gcm_algorithm = "RSA"
+                    key_length = 2048  # conservative; actual size not captured in KEX
+                elif "ecdsa" in key_type or "nistp" in key_type:
+                    gcm_algorithm = "ECDSA"
+                    key_length = 256 if "256" in key_type else (384 if "384" in key_type else 521)
+                elif "dss" in key_type or "dsa" in key_type:
+                    gcm_algorithm = "DSA"
+                    key_length = 1024
+                else:
+                    gcm_algorithm = key_type  # pass through unknown types as-is
+                    key_length = 0
 
-                body = {
-                    "crypto_object_keys": [
+                key_obj: Dict[str, Any] = {
+                    "crypto_object_name": alias,
+                    "key_algorithm": gcm_algorithm,
+                    "discovery_sources": ["GCM-Scanner"],
+                    "relationships": [
                         {
-                            "crypto_object_name": alias,
-                            "key_algorithm": key_type,
-                            "key_type": "PUBLIC",
-                            "key_usage": "AUTHENTICATION",
-                            "key_length": key_length,
-                            "discovery_sources": ["GCM-Scanner"],
-                            "origin_source": "DISCOVERED",
-                            "relationships": [
-                                {
-                                    "asset_identifiers": {"uri": uri},
-                                    "asset_type": "IT_ASSET",
-                                    "relationship_type": "HOSTED_ON",
-                                }
-                            ],
-                            "extensions": {
-                                "ssh_advertised_algorithms": alg_list,
-                            },
+                            "asset_identifiers": {"uri": uri},
+                            "asset_type": "IT_ASSET",
+                            "relationship_type": "HOSTED_ON",
                         }
                     ],
+                    "extensions": {
+                        "ssh_host_key_type": key_type,
+                        "ssh_advertised_algorithms": alg_list,
+                    },
+                }
+                # Only include numeric fields when they have a meaningful value
+                if key_length:
+                    key_obj["key_length"] = key_length
+
+                body = {
+                    "crypto_object_keys": [key_obj],
                     "detailed_response": True,
                 }
 
