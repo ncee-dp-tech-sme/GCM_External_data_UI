@@ -386,6 +386,86 @@ Alternatively, expand **Or upload a certificates CSV manually** to import only T
 | `POST` | `/api/v1/scanner/import-csv` | Import TLS certificates from CSV into GCM |
 | `POST` | `/api/v1/scanner/ingest-scan-results` | Ingest SSH host keys and TLS protocol metadata from scan results into GCM |
 
+## Docker Deployment
+
+The easiest way to run GCM Web UI is as a Docker container. The image bundles the backend and frontend into a single container — no separate web server is required.
+
+### Prerequisites
+
+- Docker 20.10+ and Docker Compose v2 (or `docker-compose` v1.29+)
+- A copy of `backend/.env` with valid `SECRET_KEY`, `ENCRYPTION_KEY`, and — if needed — `ENABLE_ASSET_SYNC`.
+
+### Quick Start
+
+```bash
+# 1. Clone / extract the repo and enter the project root
+cd /path/to/GCM_External_data_UI
+
+# 2. Create .env from the template (generates keys automatically)
+cp backend/.env.example backend/.env
+# Edit backend/.env and set SECRET_KEY, ENCRYPTION_KEY (use backend/setup.sh to auto-generate)
+
+# 3. Build and start
+docker compose up -d --build
+
+# 4. Open the UI
+open http://localhost:8000
+```
+
+The SQLite database is persisted in a named Docker volume (`gcm-data`), so your profiles and synced data survive container restarts and image rebuilds.
+
+### Enabling the Asset Sync Feature
+
+By default only the **Profiles**, **Scanner**, and **Authentication** tabs are visible. To also show the **Crypto Objects** and **IT Assets** tabs with their sync actions, set the feature flag in `backend/.env`:
+
+```env
+ENABLE_ASSET_SYNC=true
+```
+
+Then restart the container:
+
+```bash
+docker compose restart gcm-webui
+```
+
+The frontend reads the flag from `/api/v1/config/features` on every page load and reveals (or hides) the tabs and sync buttons accordingly — no rebuild required.
+
+### Environment Variables (Docker)
+
+| Variable | Default | Description |
+|---|---|---|
+| `SECRET_KEY` | *(required)* | JWT / session signing key |
+| `ENCRYPTION_KEY` | *(required)* | Fernet key for encrypting credentials at rest |
+| `ENABLE_ASSET_SYNC` | `false` | Show IT Assets and Crypto Objects tabs |
+| `HOST` | `0.0.0.0` | Bind address |
+| `PORT` | `8000` | Bind port |
+| `LOG_LEVEL` | `INFO` | Uvicorn / app log level |
+| `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed CORS origins |
+
+### Manual Docker Run (without Compose)
+
+```bash
+docker build -t gcm-webui .
+docker run -d \
+  --name gcm-webui \
+  -p 8000:8000 \
+  --env-file backend/.env \
+  -v gcm-data:/app/backend \
+  gcm-webui
+```
+
+### Upgrading the Container
+
+```bash
+# Pull latest code / rebuild
+docker compose build --no-cache
+
+# Restart (database volume is preserved)
+docker compose up -d
+```
+
+---
+
 ### Database Migrations
 
 The application runs zero-downtime column migrations on every startup via `migrate_db()` in [`backend/app/database.py`](backend/app/database.py). New columns are added with `ALTER TABLE … ADD COLUMN` and silently skipped if they already exist. **No manual migration steps are required when upgrading.**
@@ -644,88 +724,6 @@ The GCM `/v2/assets/ingest/crypto_objects/keys` endpoint appears to require the 
 - TLS certificates and TLS protocol metadata from the same scan are unaffected and import normally.
 
 If you have access to GCM API documentation for `/v2/assets/ingest/crypto_objects/keys` or can obtain a working example payload from IBM support, please open an issue — the fix would be a targeted change to the key payload builder in [`backend/app/services/scanner_service.py`](backend/app/services/scanner_service.py).
-
----
-
-## Docker Deployment
-
-The easiest way to run GCM Web UI is as a Docker container. The image bundles the backend and frontend into a single container — no separate web server is required.
-
-### Prerequisites
-
-- Docker 20.10+ and Docker Compose v2 (or `docker-compose` v1.29+)
-- A copy of `backend/.env` with valid `SECRET_KEY`, `ENCRYPTION_KEY`, and — if needed — `ENABLE_ASSET_SYNC`.
-
-### Quick Start
-
-```bash
-# 1. Clone / extract the repo and enter the project root
-cd /path/to/GCM_External_data_UI
-
-# 2. Create .env from the template (generates keys automatically)
-cp backend/.env.example backend/.env
-# Edit backend/.env and set SECRET_KEY, ENCRYPTION_KEY (use backend/setup.sh to auto-generate)
-
-# 3. Build and start
-docker compose up -d --build
-
-# 4. Open the UI
-open http://localhost:8000
-```
-
-The SQLite database is persisted in a named Docker volume (`gcm-data`), so your profiles and synced data survive container restarts and image rebuilds.
-
-### Enabling the Asset Sync Feature
-
-By default only the **Profiles**, **Scanner**, and **Authentication** tabs are visible. To also show the **Crypto Objects** and **IT Assets** tabs with their sync actions, set the feature flag in `backend/.env`:
-
-```env
-ENABLE_ASSET_SYNC=true
-```
-
-Then restart the container:
-
-```bash
-docker compose restart gcm-webui
-```
-
-The frontend reads the flag from `/api/v1/config/features` on every page load and reveals (or hides) the tabs and sync buttons accordingly — no rebuild required.
-
-### Environment Variables (Docker)
-
-| Variable | Default | Description |
-|---|---|---|
-| `SECRET_KEY` | *(required)* | JWT / session signing key |
-| `ENCRYPTION_KEY` | *(required)* | Fernet key for encrypting credentials at rest |
-| `ENABLE_ASSET_SYNC` | `false` | Show IT Assets and Crypto Objects tabs |
-| `HOST` | `0.0.0.0` | Bind address |
-| `PORT` | `8000` | Bind port |
-| `LOG_LEVEL` | `INFO` | Uvicorn / app log level |
-| `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed CORS origins |
-
-### Manual Docker Run (without Compose)
-
-```bash
-docker build -t gcm-webui .
-docker run -d \
-  --name gcm-webui \
-  -p 8000:8000 \
-  --env-file backend/.env \
-  -v gcm-data:/app/backend \
-  gcm-webui
-```
-
-### Upgrading the Container
-
-```bash
-# Pull latest code / rebuild
-docker compose build --no-cache
-
-# Restart (database volume is preserved)
-docker compose up -d
-```
-
----
 
 ## Production Deployment
 
