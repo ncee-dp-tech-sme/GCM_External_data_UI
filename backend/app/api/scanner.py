@@ -167,29 +167,24 @@ async def import_csv(
                 detail="No active profile configured. Please configure a profile first."
             )
         
-        # Get access token
-        access_token = AuthService.get_active_profile_token(db)
-        if not access_token:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Not authenticated. Please authenticate first."
-            )
-        
+        # Get auth headers — routes exclusively through the active auth method
+        auth_headers = AuthService.get_active_profile_headers(db)
+
         # Read file content
         content = await file.read()
         csv_content = content.decode('utf-8')
-        
+
         # Validate CSV first
         total_rows, valid_rows, validation_results = ScannerService.validate_csv_content(
             csv_content
         )
-        
+
         if valid_rows == 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="No valid rows found in CSV. Please check the file format."
             )
-        
+
         # Import certificates
         profile_data = {
             "app_uri": profile.app_uri,
@@ -199,11 +194,11 @@ async def import_csv(
             "insecure": profile.insecure,
             "timeout": profile.timeout,
         }
-        
+
         imported_count, failed_count, errors = ScannerService.import_certificates_from_csv(
             csv_content=csv_content,
             profile_data=profile_data,
-            access_token=access_token
+            auth_headers=auth_headers,
         )
         
         return CSVImportResponse(

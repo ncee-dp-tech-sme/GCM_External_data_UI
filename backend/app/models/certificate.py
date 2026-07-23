@@ -1,5 +1,7 @@
 """
 2026-06-01T23:31:00Z - Initial creation of certificate model
+2026-07-25T00:10:00Z - Added missing GCM fields: certificate_validity_period, is_short_lived,
+                       san (JSON), is_exception, group_updated_at, gcm_created_at, gcm_updated_at
 Certificate database model for GCM certificate inventory
 Stores certificate metadata and relationships
 """
@@ -63,11 +65,26 @@ class Certificate(Base):
     object_status = Column(String(50), nullable=True)  # Active, Inactive, etc.
     auto_renewal_status = Column(String(50), nullable=True)
     
+    # Certificate validity period string from GCM (e.g. "606 days")
+    certificate_validity_period = Column(String(50), nullable=True)
+
+    # Boolean flags from GCM
+    is_short_lived = Column(Boolean, nullable=True)
+    is_exception = Column(Boolean, nullable=True)
+
+    # Subject Alternative Names – stored as JSON array of {type_id, value}
+    san = Column(Text, nullable=True)
+
     # Discovery and tracking
     discovery_sources = Column(Text, nullable=True)  # JSON array
     first_seen = Column(DateTime(timezone=True), nullable=True)
     last_seen = Column(DateTime(timezone=True), nullable=True)
-    
+
+    # GCM-side created_at / updated_at (distinct from local DB timestamps)
+    gcm_created_at = Column(DateTime(timezone=True), nullable=True)
+    gcm_updated_at = Column(DateTime(timezone=True), nullable=True)
+    group_updated_at = Column(DateTime(timezone=True), nullable=True)
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

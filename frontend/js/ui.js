@@ -1,4 +1,5 @@
 // 2026-06-01T23:15:00Z - Created UI helper functions for toast notifications and page navigation
+// 2026-07-23: Updated profile card to display auth_method and api key status
 
 /**
  * UI Helper Functions
@@ -161,6 +162,11 @@ function createProfileCard(profile) {
                     <span class="profile-info-value">${truncate(profile.app_uri, 30)}</span>
                 </div>
                 <div class="profile-info-item">
+                    <span class="profile-info-label">Auth Method:</span>
+                    <span class="profile-info-value">${profile.auth_method === 'api_key' ? '🔑 API Key' : '🔐 OIDC'}</span>
+                </div>
+                ${profile.auth_method !== 'api_key' ? `
+                <div class="profile-info-item">
                     <span class="profile-info-label">OIDC URI:</span>
                     <span class="profile-info-value">${truncate(profile.oidc_uri, 30)}</span>
                 </div>
@@ -175,7 +181,11 @@ function createProfileCard(profile) {
                 <div class="profile-info-item">
                     <span class="profile-info-label">Has Credentials:</span>
                     <span class="profile-info-value">${profile.has_username && profile.has_password ? '✅' : '❌'}</span>
-                </div>
+                </div>` : `
+                <div class="profile-info-item">
+                    <span class="profile-info-label">Has API Key:</span>
+                    <span class="profile-info-value">${profile.has_api_key ? '✅' : '❌'}</span>
+                </div>`}
                 <div class="profile-info-item">
                     <span class="profile-info-label">Created:</span>
                     <span class="profile-info-value">${formatDateTime(profile.created_at)}</span>

@@ -5,6 +5,8 @@ Wraps existing Python modules from disconnected-scanner/ directory.
 Created: 2026-06-02
 Last Modified: 2026-06-02 17:18 UTC - Fixed CSV validation to handle case-insensitive headers (Alias, Certdata, URI)
 Last Modified: 2026-06-02 17:30 UTC - Fixed certificate import to use correct API endpoint and request format
+Last Modified: 2026-07-23 00:00 UTC - import_certificates_from_csv now accepts auth_headers dict instead of
+                                       access_token string to support API key authentication.
 """
 
 import sys
@@ -17,7 +19,7 @@ from datetime import datetime
 
 # Add parent directory to path for imports
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, '../../../../'))
+PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, '../../../'))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
@@ -239,64 +241,92 @@ class ScannerService:
         return total_rows, valid_rows, validation_results
     
     @staticmethod
+    def _gcm_post(client: AuthzClient, auth_headers: Dict[str, Any], path: str, body: dict):
+        """
+        POST to a GCM API path using pre-built auth headers.
+
+        Uses client.session directly so the correct Authorization header
+        is sent verbatim regardless of auth method.
+        """
+        url = f"{client.app_uri}/{path.lstrip('/')}"
+        headers = {
+            "accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        headers.update(auth_headers)
+        return client.session.post(
+            url,
+            headers=headers,
+            json=body,
+            verify=client.verify_ssl,
+            timeout=client.timeout,
+        )
+
+    @staticmethod
     def import_certificates_from_csv(
         csv_content: str,
         profile_data: Dict[str, Any],
-        access_token: str
+        auth_headers: Dict[str, Any],
     ) -> Tuple[int, int, List[str]]:
         """
         Import certificates from CSV to GCM.
-        
+
         Args:
             csv_content: CSV file content as string
             profile_data: Profile configuration
-            access_token: GCM access token
-            
+            auth_headers: Pre-built auth headers (from AuthService.get_active_profile_headers).
+                          Must contain 'Authorization' and, for API key auth, 'token_type: api_key'.
+
         Returns:
             Tuple of (imported_count, failed_count, errors)
         """
         imported_count = 0
         failed_count = 0
         errors = []
-        
-        # Create GCM client
+
+        # Build GCM client (used for URL construction and session management)
+        app_uri = profile_data.get("app_uri", "").rstrip("/")
+        # oidc_uri is None for api_key profiles; fall back to app_uri so AuthzClient
+        # validation passes (oidc_uri is never called in the api_key path).
+        oidc_uri = (profile_data.get("oidc_uri") or app_uri).rstrip("/")
         config = {
-            "app_uri": profile_data.get("app_uri", "").rstrip("/"),
-            "oidc_uri": profile_data.get("oidc_uri", "").rstrip("/"),
+            "app_uri": app_uri,
+            "oidc_uri": oidc_uri,
             "realm": profile_data.get("realm", "gcmrealm"),
             "verify_ssl": not profile_data.get("insecure", False),
             "timeout": profile_data.get("timeout", 30.0),
             "user_agent": "gcm-webui-scanner-service/1.0",
         }
-        
+
+        # Validate that Authorization header is present before dispatching any request
+        if not auth_headers.get("Authorization"):
+            errors.append(
+                "Missing 'Authorization' header. "
+                "Ensure the active profile has valid credentials configured."
+            )
+            return imported_count, failed_count, errors
+
         try:
             client = AuthzClient(config)
-            
-            # Call authorization API
-            auth_resp = client.call_authorization_api(access_token, tenant_id=profile_data.get("tenant_id", ""))
-            if not auth_resp.ok:
-                errors.append(f"Authorization API failed: HTTP {auth_resp.status_code}")
-                return imported_count, failed_count, errors
-            
+
             # Parse CSV
             csv_file = io.StringIO(csv_content)
             reader = csv.DictReader(csv_file)
-            
+
             # Import each certificate
             for idx, row in enumerate(reader, start=2):
                 try:
                     normalized_row = ScannerService._normalize_certificate_csv_row(row)
-                    
+
                     # Prepare certificate data in GCM API format
                     uri = normalized_row.get('uri', '').strip()
                     certificate = normalized_row.get('certificate', '').strip()
                     alias = normalized_row.get('alias', '').strip()
-                    
+
                     # Generate default alias if not provided
                     if not alias and uri:
-                        # Remove scheme and special chars to create alias
                         alias = uri.replace("https://", "").replace("http://", "").replace(":", "_").replace("/", "_")
-                    
+
                     # Build request body matching GCM API format (same as post_certificate.py)
                     cert_data = {
                         "crypto_object_certs": {
@@ -311,24 +341,24 @@ class ScannerService:
                             "tag_ids": [],
                         }
                     }
-                    
-                    # POST to GCM certificate ingest API (correct endpoint)
+
+                    # POST to GCM certificate ingest API
                     ingest_path = "ibm/assetinventory/api/v1/assets/ingest/crypto_objects/certificate_from_file"
-                    resp = client.post(ingest_path, access_token, json_body=cert_data)
-                    
+                    resp = ScannerService._gcm_post(client, auth_headers, ingest_path, cert_data)
+
                     if resp.ok:
                         imported_count += 1
                     else:
                         failed_count += 1
                         errors.append(f"Row {idx}: HTTP {resp.status_code} - {resp.text[:100]}")
-                        
+
                 except Exception as e:
                     failed_count += 1
                     errors.append(f"Row {idx}: {str(e)}")
-            
+
         except Exception as e:
             errors.append(f"Import error: {str(e)}")
-        
+
         return imported_count, failed_count, errors
 
 

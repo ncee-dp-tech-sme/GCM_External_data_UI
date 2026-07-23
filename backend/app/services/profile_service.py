@@ -1,6 +1,8 @@
 """
 Profile service for managing GCM connection profiles
 Handles CRUD operations and encryption of sensitive data
+
+2026-07-23: Added api_key encryption/decryption and has_api_key response field.
 """
 
 from sqlalchemy.orm import Session
@@ -46,10 +48,12 @@ class ProfileService:
             app_uri=profile_data.app_uri,
             oidc_uri=profile_data.oidc_uri,
             realm=profile_data.realm,
+            auth_method=profile_data.auth_method,
             client_id=profile_data.client_id,
             client_secret=encryption_manager.encrypt(profile_data.client_secret) if profile_data.client_secret else None,
             username=encryption_manager.encrypt(profile_data.username) if profile_data.username else None,
             password=encryption_manager.encrypt(profile_data.password) if profile_data.password else None,
+            api_key=encryption_manager.encrypt(profile_data.api_key) if profile_data.api_key else None,
             timeout=profile_data.timeout,
             insecure=profile_data.insecure,
             tenant_id=profile_data.tenant_id,
@@ -147,6 +151,8 @@ class ProfileService:
             update_data['username'] = encryption_manager.encrypt(update_data['username'])
         if 'password' in update_data and update_data['password']:
             update_data['password'] = encryption_manager.encrypt(update_data['password'])
+        if 'api_key' in update_data and update_data['api_key']:
+            update_data['api_key'] = encryption_manager.encrypt(update_data['api_key'])
         
         for key, value in update_data.items():
             setattr(profile, key, value)
@@ -224,6 +230,7 @@ class ProfileService:
             app_uri=profile.app_uri,
             oidc_uri=profile.oidc_uri,
             realm=profile.realm,
+            auth_method=profile.auth_method,
             client_id=profile.client_id,
             timeout=profile.timeout,
             insecure=profile.insecure,
@@ -234,7 +241,8 @@ class ProfileService:
             has_client_secret=bool(profile.client_secret),
             has_refresh_token=bool(profile.refresh_token),
             has_username=bool(profile.username),
-            has_password=bool(profile.password)
+            has_password=bool(profile.password),
+            has_api_key=bool(profile.api_key),
         )
 
     @staticmethod
@@ -285,7 +293,16 @@ class ProfileService:
         if not profile.password:
             return None
         return encryption_manager.decrypt(profile.password)
-    
+
+    @staticmethod
+    def get_decrypted_api_key(profile: Profile) -> Optional[str]:
+        """
+        Get the decrypted API key for a profile
+        """
+        if not profile.api_key:
+            return None
+        return encryption_manager.decrypt(profile.api_key)
+
     @staticmethod
     def get_active_profile(db: Session) -> Profile:
         """

@@ -1,0 +1,21 @@
+# AGENTS.md
+
+This file provides guidance to agents when working with code in this repository.
+
+- Run backend commands from [`backend/`](backend); the app loads `.env` from the current working directory via [`Settings.Config.env_file`](backend/app/config.py:45).
+- Prefer the project virtualenv if present. [`backend/setup.sh`](backend/setup.sh:23) creates/uses `../../venv`, not [`backend/.venv`](backend/.env.example).
+- Start the app with [`uvicorn app.main:app --reload`](backend/setup.sh:91) from [`backend/`](backend); [`app.main`](backend/app/main.py:57) also serves the static frontend at `/`, `/css`, and `/js`.
+- There is no configured test/lint framework in repo files: no `pytest`, `ruff`, `mypy`, `eslint`, `vitest`, or package scripts were found. There is also no single-test command to document from the codebase.
+- Database tables are created implicitly on startup by [`init_db()`](backend/app/database.py:37); there are no Alembic migrations despite `alembic` being in [`backend/requirements.txt`](backend/requirements.txt:8).
+- The backend depends on repository-root helper modules by mutating `sys.path`; preserve repo-relative imports into [`common/`](common), [`certificates/`](certificates), [`it_assets/`](it_assets), and [`disconnected-scanner/`](disconnected-scanner) from services like [`CertificateService`](backend/app/services/certificate_service.py:20), [`ITAssetService`](backend/app/services/it_asset_service.py:23), and [`ScannerService`](backend/app/services/scanner_service.py:18).
+- Profiles are the central runtime dependency: most API operations fail without an active profile, and credentials/refresh tokens are stored encrypted through [`encryption_manager`](backend/app/security.py:57) plus [`ProfileService`](backend/app/services/profile_service.py:20).
+- Keep URI normalization behavior intact: profile schemas strip trailing slashes in validators for [`app_uri`](backend/app/schemas/profile.py:24) and [`oidc_uri`](backend/app/schemas/profile.py:24), while request clients also call `rstrip('/')` before building GCM URLs.
+- Authentication flow is intentionally profile-driven: [`/api/v1/auth/login`](backend/app/api/auth.py:25) uses stored username/password, [`get_active_profile_token()`](backend/app/services/auth_service.py:183) prefers refresh token fallback, and feature services expect that behavior rather than direct token injection.
+- Certificate sync expects the GCM response key [`crypto_certificates`](backend/app/services/certificate_service.py:128) first, with fallbacks to `data/certificates/results`; preserve that compatibility logic.
+- IT asset sync is built around URI uniqueness, duplicate GCM records, and page-by-page commits; do not simplify the cross-page `existing_assets_by_uri` cache or commit strategy in [`ITAssetService._sync_single_asset_type()`](backend/app/services/it_asset_service.py:107).
+- Scanner CSV import is more permissive than the UI text suggests: header normalization in [`_normalize_certificate_csv_row()`](backend/app/services/scanner_service.py:134) accepts case-insensitive variants like `Certdata` and `URI (optional)`.
+- Code style is inconsistent but has project-level patterns: backend modules usually import stdlib, then third-party, then `app.*`; routers stay thin and defer business logic to `services/`; schemas/models use singular file names matching resource names.
+- Prefer raising [`HTTPException`](backend/app/services/profile_service.py:37) from service/router layers for API failures instead of returning sentinel values.
+- Frontend is plain browser JavaScript loaded globally from [`frontend/index.html`](frontend/index.html:723); module boundaries are file-level globals, so new UI code should attach to existing global functions/instances rather than ES module imports.
+- The frontend API wrapper throws plain objects with `status`, `message`, and `data` in [`APIClient.request()`](frontend/js/api.js:14); UI code expects that shape for error toasts.
+- Watch for implementation drift: some frontend code still assumes Bootstrap modals in [`handleAssetCreate()`](frontend/js/assets.js:408), but [`frontend/index.html`](frontend/index.html:598) only includes vanilla HTML/CSS/JS.

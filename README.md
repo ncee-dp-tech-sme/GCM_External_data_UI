@@ -1,7 +1,7 @@
 # GCM Web UI - Distribution Package
 
-**Version:** 1.0.0  
-**Last Updated:** 2026-06-02
+**Version:** 1.2.0
+**Last Updated:** 2026-07-25
 
 ## Overview
 
@@ -23,16 +23,16 @@ This package contains:
 
 - 📊 **Dashboard**: Visual overview with charts and statistics
 - 👤 **Profile Management**: Create and manage GCM connection profiles
-- 🔑 **Authentication**: Secure login and authorization with GCM
-- 📜 **Certificate Management**: Upload, sync, view, and manage certificates
-- 🖥️ **IT Asset Management**: Create, sync, and manage IT assets
+- 🔑 **Authentication**: Secure login with GCM — supports **OIDC (username/password)** and **API key** authentication methods
+- 📜 **Certificate Management**: Upload, sync, view, and manage certificates with full field coverage
+- 🖥️ **IT Asset Management**: Create, sync, and manage IT assets — all GCM fields captured including security metrics, protocol versions, and service details
 - 📈 **Visual Analytics**: Real-time charts and statistics
 - 🔒 **Security**: Encrypted credential storage with Fernet encryption
 
 ### Coming Soon
 
 - 👥 **User Management**: Keycloak user creation and management *(Future Addition)*
-- 🔍 **Disconnected Scanner**: Certificate discovery in air-gapped environments *(Future Addition)*
+- 🔍 **Disconnected Scanner**: Certificate discovery in air-gapped environments *(In Progress)*
 
 ## Prerequisites
 
@@ -114,15 +114,40 @@ nano config.toml  # or use your preferred editor
 
 Update the following settings:
 
+**For OIDC authentication (default):**
+
 ```toml
 [connection]
 app_uri = "https://your-gcm-host:31443"
 oidc_uri = "https://your-gcm-host:30443"
 realm = "gcmrealm"
 
+[authentication]
+auth_method = "oidc"
+client_id = ""       # auto-selected if empty
+client_secret = ""
+# username = ""
+# password = ""
+
 [http]
 timeout = 30.0
 insecure = false  # Set to true only for development/test
+```
+
+**For API key authentication:**
+
+```toml
+[connection]
+app_uri = "https://your-gcm-host:31443"
+# oidc_uri is not required for api_key authentication
+
+[authentication]
+auth_method = "api_key"
+# api_key = ""  # set via GCM_API_KEY env var (recommended)
+
+[http]
+timeout = 30.0
+insecure = false
 ```
 
 ### Step 4: Configure Backend Environment
@@ -189,20 +214,39 @@ Before using the application, you need to create a GCM connection profile:
    - **GCM Application URI**: Your GCM server URL
    - **OIDC/Keycloak URI**: Your authentication server URL
    - **Realm**: Keycloak realm (default: `gcmrealm`)
-   - **Client ID**: OIDC client identifier
-   - **Client Secret**: OIDC client secret (will be encrypted)
-   - **Username**: Your GCM username (will be encrypted)
-   - **Password**: Your GCM password (will be encrypted)
+   - **Authentication Method**: Choose `oidc` (default) or `api_key` — see below
+   - **Client ID**: OIDC client identifier *(OIDC only)*
+   - **Client Secret**: OIDC client secret (will be encrypted) *(OIDC only)*
+   - **Username**: Your GCM username (will be encrypted) *(OIDC only)*
+   - **Password**: Your GCM password (will be encrypted) *(OIDC only)*
+   - **API Key**: Your GCM API key (will be encrypted) *(API key only)*
 3. Click **Save Profile**
 4. Click **Activate** to set it as the active profile
 
 ### Authentication
 
-After creating and activating a profile:
+The application supports two mutually exclusive authentication methods per profile. Set the `auth_method` field when creating or updating a profile.
+
+#### OIDC Authentication (default)
+
+Used when `auth_method = oidc`. The application performs a standard OIDC password grant flow against Keycloak and exchanges the resulting token with GCM. After activating an OIDC profile:
 
 1. Navigate to the **Authentication** tab
 2. Click **Login & Authorize**
-3. The system will authenticate and authorize with GCM
+3. The system authenticates with Keycloak and authorizes with GCM
+
+#### API Key Authentication
+
+Used when `auth_method = api_key`. No OIDC token exchange takes place. The API key is sent verbatim in every outgoing request using two headers:
+
+```
+Authorization: <your-api-key>
+token_type: api_key
+```
+
+When an API key profile is active, the **Login & Authorize** step is not required — the key is used automatically on each request. The `/api/v1/auth/login` endpoint will return a `400` error if called with an API key profile active, since no login step is needed.
+
+> **Security note**: API keys are encrypted at rest using Fernet encryption (same as passwords and tokens).
 
 You're now ready to use all features!
 
@@ -232,6 +276,18 @@ You're now ready to use all features!
 2. Click **Sync from GCM**
 3. View synced assets in the list
 
+The sync captures all GCM asset fields using the confirmed payload:
+
+| Section | Fields |
+|---|---|
+| Identity | `uri`, `ip`, `hostname`, `port`, `asset_id` |
+| Protocol | `protocol`, `protocol_version` (list, e.g. `["TLSv1.3","TLSv1.2"]`) |
+| Classification | `asset_type`, `asset_sub_type` |
+| Service/DB | `servicename`, `databasename`, `databasetype`, `version`, `applicationID`, `patch` |
+| Organisation | `owner`, `environment`, `location`, `network`, `tech_contacts`, `discovery_sources` |
+| Security | `mission_criticality`, `internet_facing`, `total_violation`, `pqc_readiness_flag`, `exploitability_score`, `is_exception` |
+| Timestamps | `first_seen`, `last_seen` |
+
 **Create a New Asset:**
 1. Click **Create Asset**
 2. Fill in asset details (URI, hostname, type, etc.)
@@ -239,7 +295,13 @@ You're now ready to use all features!
 
 **View Asset Details:**
 - Click **View** on any asset to see full information
-- Includes organizational metadata and security attributes
+- All sections displayed: Basic Info, Service/Application/Database, Organisational, Security & Compliance, Custom Attributes, Tracking
+- Protocol versions shown as comma-separated list
+- PQC readiness, violation counts, and exploitability score shown with colour-coded badges
+
+### Database Migrations
+
+The application runs zero-downtime column migrations on every startup via `migrate_db()` in [`backend/app/database.py`](backend/app/database.py). New columns are added with `ALTER TABLE … ADD COLUMN` and silently skipped if they already exist. **No manual migration steps are required when upgrading.**
 
 
 ## Directory Structure
@@ -291,7 +353,7 @@ dist/
 
 ### Credential Storage
 
-- All sensitive data (passwords, tokens, secrets) is encrypted using Fernet symmetric encryption
+- All sensitive data (passwords, tokens, secrets, **API keys**) is encrypted using Fernet symmetric encryption
 - Encryption keys are stored in the `.env` file
 - Never commit `.env` or `config.toml` files to version control
 
@@ -352,13 +414,21 @@ pip install -r requirements.txt
 
 ### Authentication Fails
 
-**Problem**: Login or authorization errors
+**Problem**: Login or authorization errors (OIDC)
 
 **Solution**:
 - Verify credentials in profile
 - Check Keycloak realm and client ID
 - Ensure user has proper GCM permissions
 - Review error messages in browser console
+
+**Problem**: API key requests return `401 Unauthorized`
+
+**Solution**:
+- Verify the `api_key` field is set on the active profile
+- Confirm the profile has `auth_method = api_key`
+- Re-save the profile with the correct key if it was updated on the GCM side
+- Note: the `/api/v1/auth/login` endpoint returns `400` for API key profiles — this is expected
 
 ### Database Errors
 

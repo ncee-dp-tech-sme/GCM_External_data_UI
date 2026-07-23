@@ -26,7 +26,7 @@ if [ ! -d "../../venv" ]; then
     echo "Creating virtual environment in project root..."
     cd ../..
     python3 -m venv venv
-    cd webui/backend
+    cd ../backend
     echo "Virtual environment created at ../../venv"
 else
     echo "Virtual environment already exists at ../../venv"

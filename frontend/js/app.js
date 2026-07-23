@@ -1,4 +1,5 @@
 // 2026-06-01T23:16:00Z - Created main application logic for GCM Web UI
+// 2026-07-23: Added auth_method and api_key support to profile form handling
 
 /**
  * Main Application Logic
@@ -121,16 +122,19 @@ async function handleProfileSubmit(e) {
     
     try {
         const profileId = document.getElementById('profileId').value;
+        const authMethod = document.getElementById('authMethod').value;
         const profileData = {
             name: document.getElementById('profileName').value,
             description: document.getElementById('profileDescription').value || null,
             app_uri: document.getElementById('appUri').value,
-            oidc_uri: document.getElementById('oidcUri').value,
+            oidc_uri: authMethod === 'api_key' ? null : document.getElementById('oidcUri').value,
             realm: document.getElementById('realm').value,
+            auth_method: authMethod,
             client_id: document.getElementById('clientId').value || null,
             client_secret: document.getElementById('clientSecret').value || null,
             username: document.getElementById('username').value || null,
             password: document.getElementById('password').value || null,
+            api_key: document.getElementById('apiKey').value || null,
             tenant_id: document.getElementById('tenantId').value || null,
             timeout: parseFloat(document.getElementById('timeout').value),
             user_agent: document.getElementById('userAgent').value,
@@ -158,14 +162,34 @@ async function handleProfileSubmit(e) {
     }
 }
 
+// Toggle visibility of OIDC vs API key fields based on selected auth method
+function toggleAuthFields() {
+    const method = document.getElementById('authMethod').value;
+    const oidcFields = document.getElementById('oidcFields');
+    const apiKeyFields = document.getElementById('apiKeyFields');
+    const oidcUri = document.getElementById('oidcUri');
+
+    if (method === 'api_key') {
+        oidcFields.style.display = 'none';
+        apiKeyFields.style.display = '';
+        oidcUri.removeAttribute('required');
+    } else {
+        oidcFields.style.display = '';
+        apiKeyFields.style.display = 'none';
+        oidcUri.setAttribute('required', 'required');
+    }
+}
+
 // Reset profile form
 function resetProfileForm() {
     document.getElementById('profileForm').reset();
     document.getElementById('profileId').value = '';
     document.getElementById('formTitle').textContent = 'Create New Profile';
+    document.getElementById('authMethod').value = 'oidc';
     document.getElementById('realm').value = 'gcmrealm';
     document.getElementById('timeout').value = '30';
     document.getElementById('userAgent').value = 'gcm-webui/1.0';
+    toggleAuthFields();
 }
 
 // Edit profile
@@ -178,8 +202,9 @@ async function editProfile(profileId) {
         document.getElementById('profileName').value = profile.name;
         document.getElementById('profileDescription').value = profile.description || '';
         document.getElementById('appUri').value = profile.app_uri;
-        document.getElementById('oidcUri').value = profile.oidc_uri;
+        document.getElementById('oidcUri').value = profile.oidc_uri || '';
         document.getElementById('realm').value = profile.realm;
+        document.getElementById('authMethod').value = profile.auth_method || 'oidc';
         document.getElementById('clientId').value = profile.client_id || '';
         document.getElementById('tenantId').value = profile.tenant_id || '';
         document.getElementById('timeout').value = profile.timeout;
@@ -190,8 +215,10 @@ async function editProfile(profileId) {
         document.getElementById('clientSecret').value = '';
         document.getElementById('username').value = '';
         document.getElementById('password').value = '';
+        document.getElementById('apiKey').value = '';
         
         document.getElementById('formTitle').textContent = 'Edit Profile';
+        toggleAuthFields();
         
         // Scroll to form
         document.querySelector('.form-section').scrollIntoView({ behavior: 'smooth' });

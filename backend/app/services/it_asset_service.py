@@ -3,13 +3,22 @@ IT Asset service layer for GCM Web UI.
 Wraps existing Python modules from it_assets/ directory.
 
 Created: 2026-06-02
-Last Modified: 2026-06-03
+Last Modified: 2026-07-23
 
 Changes:
 - 2026-06-03 22:44 UTC: Fixed UNIQUE constraint error during sync by maintaining existing_assets_by_uri map across all pages instead of recreating it per page. This prevents duplicate inserts when the same URI appears multiple times in the GCM API response across different pages.
 - 2026-06-03 22:54 UTC: Investigation completed - GCM API returns duplicate URIs (178 duplicates out of 646 records). Sync correctly handles this by updating existing assets. Cleaned up debug logging.
 - 2026-06-03 23:07 UTC: Fixed critical pagination bug - changed break condition from 'len(assets_list) < page_size' to 'not assets_list' to properly handle the last page which naturally has fewer assets than page_size.
 - 2026-06-03 23:17 UTC: CRITICAL FIX - Changed commit strategy from single commit at end to commit after each page. This prevents losing all synced data if an error occurs during processing. Assets are now persisted incrementally, ensuring partial sync success even if later pages fail.
+- 2026-07-23 00:00 UTC: Added API key authentication support. sync_assets_from_gcm() and related methods now
+  accept auth_headers dict instead of a plain access_token string, routed through AuthService.
+- 2026-07-25 00:02 UTC: Fixed sync endpoint: use /it_assets/all instead of /it_assets/{type} per-type
+  paths (services/applications/databases) which are not valid GCM API endpoints.
+- 2026-07-25 00:03 UTC: Restored call_authorization_api for OIDC path (was removed by today's refactor,
+  causing empty results). API key path skips authz call as before. Replaced columns:["all"] with the
+  specific field list that GCM accepts.
+- 2026-07-25: Set exact GCM columns list (confirmed working payload). Added mapping for all new
+  fields: protocol_version, servicename, databasename, databasetype, version, applicationID, patch.
 """
 
 import sys
@@ -22,7 +31,7 @@ from sqlalchemy import func, or_
 
 # Add parent directory to path for imports
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, '../../../../'))
+PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, '../../../'))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
@@ -46,80 +55,88 @@ class ITAssetService:
     def get_gcm_client(self, profile_data: Dict[str, Any]) -> AuthzClient:
         """
         Create GCM client from profile data.
-        
+
         Args:
             profile_data: Profile configuration dictionary
-            
+
         Returns:
             Configured AuthzClient instance
         """
+        app_uri = profile_data.get("app_uri", "").rstrip("/")
+        # oidc_uri is None for api_key profiles; fall back to app_uri so AuthzClient
+        # validation passes (oidc_uri is never called in the api_key path).
+        oidc_uri = (profile_data.get("oidc_uri") or app_uri).rstrip("/")
         config = {
-            "app_uri": profile_data.get("app_uri", "").rstrip("/"),
-            "oidc_uri": profile_data.get("oidc_uri", "").rstrip("/"),
+            "app_uri": app_uri,
+            "oidc_uri": oidc_uri,
             "realm": profile_data.get("realm", "gcmrealm"),
             "verify_ssl": not profile_data.get("insecure", False),
             "timeout": profile_data.get("timeout", 30.0),
             "user_agent": "gcm-webui-asset-service/1.0",
         }
         return AuthzClient(config)
+
+    @staticmethod
+    def _gcm_post(client: AuthzClient, auth_headers: Dict[str, str], path: str, body: dict):
+        """
+        POST to a GCM API path using pre-built auth headers.
+
+        Uses client.session directly so the correct Authorization header
+        (Bearer token for OIDC, or raw api_key for API key auth) is sent
+        verbatim without being overridden by AuthzClient internals.
+        """
+        url = f"{client.app_uri}/{path.lstrip('/')}"
+        headers = {
+            "accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        headers.update(auth_headers)
+        return client.session.post(
+            url,
+            headers=headers,
+            json=body,
+            verify=client.verify_ssl,
+            timeout=client.timeout,
+        )
     
     def sync_assets_from_gcm(
         self,
         profile_data: Dict[str, Any],
-        access_token: str,
+        auth_headers: Dict[str, str],
         asset_type: str = "all",
         page_size: int = 100
     ) -> Tuple[int, int, int, List[str]]:
         """
         Sync IT assets from GCM inventory.
-        
+
         Args:
             profile_data: Profile configuration
-            access_token: GCM access token
+            auth_headers: Pre-built auth headers (from AuthService.get_active_profile_headers)
             asset_type: Type of assets to sync (services, applications, databases, or "all" for all types)
             page_size: Number of assets per page
-            
+
         Returns:
             Tuple of (synced_count, created_count, updated_count, errors)
         """
-        # If asset_type is "all" or empty, sync all types
-        if asset_type == "all" or not asset_type:
-            asset_types = ["services", "applications", "databases"]
-            total_synced = 0
-            total_created = 0
-            total_updated = 0
-            all_errors = []
-            
-            for atype in asset_types:
-                synced, created, updated, errors = self._sync_single_asset_type(
-                    profile_data, access_token, atype, page_size
-                )
-                total_synced += synced
-                total_created += created
-                total_updated += updated
-                all_errors.extend(errors)
-            
-            return total_synced, total_created, total_updated, all_errors
-        else:
-            # Sync single asset type
-            return self._sync_single_asset_type(profile_data, access_token, asset_type, page_size)
+        # Always sync via the /all endpoint regardless of asset_type filter
+        return self._sync_single_asset_type(profile_data, auth_headers, "all", page_size)
     
     def _sync_single_asset_type(
         self,
         profile_data: Dict[str, Any],
-        access_token: str,
+        auth_headers: Dict[str, str],
         asset_type: str,
         page_size: int = 100
     ) -> Tuple[int, int, int, List[str]]:
         """
         Sync a single asset type from GCM inventory.
-        
+
         Args:
             profile_data: Profile configuration
-            access_token: GCM access token
+            auth_headers: Pre-built auth headers (from AuthService.get_active_profile_headers)
             asset_type: Type of assets to sync (services, applications, databases)
             page_size: Number of assets per page
-            
+
         Returns:
             Tuple of (synced_count, created_count, updated_count, errors)
         """
@@ -128,41 +145,59 @@ class ITAssetService:
         created_count = 0
         updated_count = 0
         errors = []
-        
+
         # Initialize existing_assets_by_uri map ONCE for the entire sync
         # This map will be updated as new assets are created, preventing duplicates across pages
         existing_assets_by_uri = {}
-        
+
         try:
-            # Call authorization API first (required before accessing GCM APIs)
-            try:
-                auth_resp = client.call_authorization_api(access_token, tenant_id=profile_data.get("tenant_id", ""))
-                if not auth_resp.ok:
-                    errors.append(f"Authorization API failed: HTTP {auth_resp.status_code}")
-                    return synced_count, created_count, updated_count, errors
-            except Exception as e:
-                errors.append(f"Authorization error: {str(e)}")
-                return synced_count, created_count, updated_count, errors
-            
+            # For OIDC auth, call_authorization_api must be called on this client's session
+            # so the GCM PD session cookie is set before any inventory API calls.
+            # For API key auth, no authorization call is required.
+            is_api_key = profile_data.get("auth_method") == "api_key"
+            if not is_api_key:
+                # Extract Bearer token and call the authz API to establish session cookie
+                bearer = auth_headers.get("Authorization", "")
+                access_token = bearer.replace("Bearer ", "").strip()
+                if access_token:
+                    auth_resp = client.call_authorization_api(
+                        access_token,
+                        tenant_id=profile_data.get("tenant_id", "")
+                    )
+                    if not auth_resp.ok:
+                        errors.append(f"Authorization API failed: HTTP {auth_resp.status_code}")
+                        return synced_count, created_count, updated_count, errors
+
             # Fetch assets from GCM
-            list_path = f"ibm/assetinventory/api/v1/assets/it_assets/{asset_type}"
-            
+            # /it_assets/all is the correct GCM endpoint for listing IT assets
+            list_path = "ibm/assetinventory/api/v1/assets/it_assets/all"
+
             page = 1
             total_count = None
             total_pages_calculated = None
-            
+
             while True:
                 body = {
-                    "columns": ["all"],
+                    "columns": [
+                        "groups", "is_exception", "associated_policies",
+                        "monitored_group_ids", "ip", "managed_by_dpm", "uri",
+                        "asset_type", "asset_sub_type", "associated_crypto_objects",
+                        "exploitability_score", "discovery_sources", "mission_criticality",
+                        "hostname", "port", "protocol", "location", "owner", "network",
+                        "environment", "last_seen", "first_seen", "internet_facing",
+                        "total_violation", "tech_contacts", "pqc_readiness_flag",
+                        "protocol_version", "servicename", "databasename", "databasetype",
+                        "version", "applicationID", "patch"
+                    ],
                     "page_number": page,
                     "page_size": page_size,
                     "filter": "",
                     "search_by": "",
                     "sort_by": ""
                 }
-                
+
                 try:
-                    resp = client.post(list_path, access_token, json_body=body)
+                    resp = self._gcm_post(client, auth_headers, list_path, body)
                     if not resp.ok:
                         errors.append(f"GCM API error: HTTP {resp.status_code} - {resp.text}")
                         break
@@ -316,16 +351,23 @@ class ITAssetService:
             tech_contacts = [c.strip() for c in tech_contacts.split(",") if c.strip()]
         elif not isinstance(tech_contacts, list):
             tech_contacts = None
-        
+
         # Handle extensions/custom attributes
         extensions = gcm_data.get("extensions")
         if extensions and not isinstance(extensions, dict):
             extensions = None
-        
+
         # Handle discovery sources
         discovery_sources = gcm_data.get("discovery_sources")
         if discovery_sources and not isinstance(discovery_sources, list):
             discovery_sources = None
+
+        # Handle protocol_version - GCM returns a list of version strings
+        protocol_version = gcm_data.get("protocol_version")
+        if protocol_version and not isinstance(protocol_version, list):
+            protocol_version = [str(protocol_version)]
+        elif not protocol_version:
+            protocol_version = None
         
         return {
             "asset_id": gcm_data.get("asset_id"),
@@ -334,6 +376,7 @@ class ITAssetService:
             "hostname": gcm_data.get("hostname"),
             "port": gcm_data.get("port"),
             "protocol": gcm_data.get("protocol"),
+            "protocol_version": protocol_version,
             "asset_type": gcm_data.get("asset_type"),
             "asset_sub_type": gcm_data.get("asset_sub_type"),
             "owner": gcm_data.get("owner"),
@@ -348,6 +391,16 @@ class ITAssetService:
             "first_seen": self._parse_datetime(gcm_data.get("first_seen")),
             "last_seen": self._parse_datetime(gcm_data.get("last_seen")),
             "object_status": gcm_data.get("object_status"),
+            "total_violation": gcm_data.get("total_violation"),
+            "pqc_readiness_flag": gcm_data.get("pqc_readiness_flag"),
+            "exploitability_score": gcm_data.get("exploitability_score"),
+            "is_exception": gcm_data.get("is_exception"),
+            "servicename": gcm_data.get("servicename"),
+            "databasename": gcm_data.get("databasename"),
+            "databasetype": gcm_data.get("databasetype"),
+            "version": gcm_data.get("version"),
+            "application_id": gcm_data.get("applicationID"),
+            "patch": gcm_data.get("patch"),
         }
     
     def _parse_datetime(self, dt_str: Optional[str]) -> Optional[datetime]:
@@ -362,22 +415,22 @@ class ITAssetService:
     def create_asset(
         self,
         profile_data: Dict[str, Any],
-        access_token: str,
+        auth_headers: Dict[str, str],
         asset_data: ITAssetCreate
     ) -> ITAsset:
         """
         Create a new IT asset in GCM and local database.
-        
+
         Args:
             profile_data: Profile configuration
-            access_token: GCM access token
+            auth_headers: Pre-built auth headers
             asset_data: Asset creation data
-            
+
         Returns:
             Created ITAsset instance
         """
         client = self.get_gcm_client(profile_data)
-        
+
         # Prepare asset body for GCM ingest API
         asset_body = {
             "uri": asset_data.uri,
@@ -386,7 +439,7 @@ class ITAssetService:
             "port": asset_data.port,
             "asset_type": asset_data.asset_type,
         }
-        
+
         # Add optional fields
         if asset_data.protocol:
             asset_body["protocol"] = asset_data.protocol
@@ -405,16 +458,15 @@ class ITAssetService:
         if asset_data.mission_criticality is not None:
             asset_body["mission_criticality"] = asset_data.mission_criticality
         if asset_data.internet_facing:
-            # Convert to boolean for ingest API
             asset_body["internet_facing"] = asset_data.internet_facing.upper() == "TRUE"
         if asset_data.extensions:
             asset_body["extensions"] = asset_data.extensions
-        
+
         # Call GCM ingest API
         ingest_path = "ibm/assetinventory/api/v2/assets/ingest/it_assets"
         payload = {"it_assets": [asset_body]}
-        
-        resp = client.post(ingest_path, access_token, json_body=payload)
+
+        resp = self._gcm_post(client, auth_headers, ingest_path, payload)
         if not resp.ok:
             raise Exception(f"GCM API error: HTTP {resp.status_code} - {resp.text}")
         
@@ -515,70 +567,69 @@ class ITAssetService:
         self,
         asset_id: int,
         profile_data: Dict[str, Any],
-        access_token: str,
+        auth_headers: Dict[str, str],
         update_data: ITAssetUpdate
     ) -> Optional[ITAsset]:
         """
         Update an IT asset in GCM and local database.
-        
+
         Args:
             asset_id: Database asset ID
             profile_data: Profile configuration
-            access_token: GCM access token
+            auth_headers: Pre-built auth headers
             update_data: Update data
-            
+
         Returns:
             Updated ITAsset instance or None if not found
         """
         asset = self.get_asset_by_id(asset_id)
         if not asset:
             return None
-        
+
         client = self.get_gcm_client(profile_data)
-        
+
         # Separate editable and non-editable fields
         editable_fields = {
             "environment", "internet_facing", "location",
             "mission_criticality", "network", "owner",
             "protocol", "tech_contacts"
         }
-        
+
         editable_updates = {}
         ingest_updates = {}
-        
+
         update_dict = update_data.dict(exclude_unset=True)
         for key, value in update_dict.items():
             if key in editable_fields:
                 editable_updates[key] = value
             else:
                 ingest_updates[key] = value
-        
+
         # Update editable fields via PUT API
         if editable_updates and asset.asset_id:
             put_path = "ibm/assetinventory/api/v1/assets/it_assets"
             payload = {
                 "asset_ids": [asset.asset_id],
-                "editable_it_asset_attributes": editable_updates
+                "editable_it_asset_attributes": editable_updates,
             }
+            put_headers = {"Content-Type": "application/json"}
+            put_headers.update(auth_headers)
             resp = client.session.put(
                 f"{client.app_uri}/{put_path}",
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Content-Type": "application/json"
-                },
+                headers=put_headers,
                 json=payload,
                 verify=client.verify_ssl,
-                timeout=client.timeout
+                timeout=client.timeout,
             )
             if not resp.ok:
                 raise Exception(f"GCM PUT API error: HTTP {resp.status_code}")
-        
+
         # Update non-editable fields via ingest API
         if ingest_updates:
             ingest_updates["uri"] = asset.uri  # URI is required
             ingest_path = "ibm/assetinventory/api/v2/assets/ingest/it_assets"
             payload = {"it_assets": [ingest_updates]}
-            resp = client.post(ingest_path, access_token, json_body=payload)
+            resp = self._gcm_post(client, auth_headers, ingest_path, payload)
             if not resp.ok:
                 raise Exception(f"GCM ingest API error: HTTP {resp.status_code}")
         
@@ -598,38 +649,38 @@ class ITAssetService:
         self,
         asset_ids: List[int],
         profile_data: Dict[str, Any],
-        access_token: str
+        auth_headers: Dict[str, str],
     ) -> Tuple[int, List[str]]:
         """
         Delete IT assets from GCM and local database.
-        
+
         Args:
             asset_ids: List of database asset IDs
             profile_data: Profile configuration
-            access_token: GCM access token
-            
+            auth_headers: Pre-built auth headers
+
         Returns:
             Tuple of (deleted_count, errors)
         """
         client = self.get_gcm_client(profile_data)
         deleted_count = 0
         errors = []
-        
+
         for asset_id in asset_ids:
             try:
                 asset = self.get_asset_by_id(asset_id)
                 if not asset:
                     errors.append(f"Asset ID {asset_id} not found")
                     continue
-                
+
                 # Delete from GCM
                 delete_path = "ibm/assetinventory/api/v1/assets/delete/it_assets"
                 payload = {
                     "asset_id": [],
-                    "uri": [asset.uri]
+                    "uri": [asset.uri],
                 }
-                
-                resp = client.post(delete_path, access_token, json_body=payload)
+
+                resp = self._gcm_post(client, auth_headers, delete_path, payload)
                 if not resp.ok:
                     errors.append(f"GCM delete error for {asset.uri}: HTTP {resp.status_code}")
                     continue

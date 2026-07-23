@@ -27,48 +27,50 @@ from app.schemas.it_asset import (
 router = APIRouter()
 
 
-def get_active_profile_and_token(db: Session) -> tuple:
+def get_active_profile_and_headers(db: Session) -> tuple:
     """
-    Get active profile and access token.
-    
+    Get active profile data and ready-to-use auth headers.
+
+    Supports both OIDC and API key authentication methods transparently.
+    The auth_method on the active profile determines which path is taken;
+    no mixing of methods occurs.
+
     Returns:
-        Tuple of (profile_data, access_token)
-        
+        Tuple of (profile_data dict, auth_headers dict)
+
     Raises:
-        HTTPException: If no active profile or token unavailable
+        HTTPException: If no active profile or credential retrieval fails
     """
     profile = ProfileService.get_active_profile(db)
-    
+
     if not profile:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No active profile configured"
+            detail="No active profile configured",
         )
-    
-    # Get access token using AuthService
+
+    # Single call — branches exclusively on profile.auth_method
     try:
-        access_token = AuthService.get_active_profile_token(db)
-        if not access_token:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Failed to obtain access token. Please authenticate first."
-            )
+        auth_headers = AuthService.get_active_profile_headers(db)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Authentication error: {str(e)}"
+            detail=f"Authentication error: {str(e)}",
         )
-    
-    # Convert profile to dict
+
     profile_data = {
         "app_uri": profile.app_uri,
         "oidc_uri": profile.oidc_uri,
         "realm": profile.realm,
         "insecure": profile.insecure,
         "timeout": profile.timeout,
+        "tenant_id": profile.tenant_id,
+        "auth_method": profile.auth_method,
     }
-    
-    return profile_data, access_token
+
+    return profile_data, auth_headers
 
 
 @router.post("/sync", response_model=SyncAssetsResponse)
@@ -81,14 +83,14 @@ def sync_assets(
     
     Fetches assets from GCM and updates local database.
     """
-    profile_data, access_token = get_active_profile_and_token(db)
+    profile_data, auth_headers = get_active_profile_and_headers(db)
     
     service = ITAssetService(db)
     
     try:
         synced, created, updated, errors = service.sync_assets_from_gcm(
             profile_data=profile_data,
-            access_token=access_token,
+            auth_headers=auth_headers,
             asset_type=request.asset_type,
             page_size=request.page_size
         )
@@ -218,7 +220,7 @@ def create_asset(
     
     Creates the asset in both GCM and local database.
     """
-    profile_data, access_token = get_active_profile_and_token(db)
+    profile_data, auth_headers = get_active_profile_and_headers(db)
     
     service = ITAssetService(db)
     
@@ -233,7 +235,7 @@ def create_asset(
     try:
         asset = service.create_asset(
             profile_data=profile_data,
-            access_token=access_token,
+            auth_headers=auth_headers,
             asset_data=asset_data
         )
         return asset
@@ -255,7 +257,7 @@ def update_asset(
     
     Updates the asset in both GCM and local database.
     """
-    profile_data, access_token = get_active_profile_and_token(db)
+    profile_data, auth_headers = get_active_profile_and_headers(db)
     
     service = ITAssetService(db)
     
@@ -263,7 +265,7 @@ def update_asset(
         asset = service.update_asset(
             asset_id=asset_id,
             profile_data=profile_data,
-            access_token=access_token,
+            auth_headers=auth_headers,
             update_data=update_data
         )
         
@@ -300,7 +302,7 @@ def delete_assets(
             detail="No asset IDs provided"
         )
     
-    profile_data, access_token = get_active_profile_and_token(db)
+    profile_data, auth_headers = get_active_profile_and_headers(db)
     
     service = ITAssetService(db)
     
@@ -308,7 +310,7 @@ def delete_assets(
         deleted_count, errors = service.delete_assets(
             asset_ids=asset_ids,
             profile_data=profile_data,
-            access_token=access_token
+            auth_headers=auth_headers,
         )
         
         return {

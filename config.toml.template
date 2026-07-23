@@ -22,6 +22,13 @@ oidc_uri = "https://gcm:30443"
 realm = "gcmrealm"
 
 [authentication]
+# Authentication method: "oidc" (default) or "api_key"
+# - "oidc"    : standard Keycloak/OIDC password grant; requires oidc_uri + credentials below
+# - "api_key" : send API key directly; oidc_uri and OIDC credentials are ignored
+auth_method = "oidc"
+
+# --- OIDC settings (used only when auth_method = "oidc") ---
+
 # OIDC client ID
 # - Default for refresh token: "gcmapiclient"
 # - Default for password authentication: "gcmclient"
@@ -35,13 +42,20 @@ client_secret = ""
 
 # Authentication credentials (optional - command-line arguments recommended)
 # Warning: Plain text storage is NOT recommended. Use environment variables or prompts
-# 
+#
 # Refresh token (for refresh_token grant)
 # refresh_token = ""
 #
 # Username and password (for password grant)
 # username = ""
 # password = ""
+
+# --- API key settings (used only when auth_method = "api_key") ---
+
+# API key — sent verbatim as:  Authorization: <key>  +  token_type: api_key
+# Warning: Plain text storage is NOT recommended. Use environment variables or prompts
+# Example: export GCM_API_KEY="your-api-key-here"
+# api_key = ""
 
 [http]
 # HTTP timeout (seconds)
@@ -82,9 +96,10 @@ user_agent = "gcm-api-scripts/1.0"
 #
 # 1. Protecting sensitive data:
 #    - config.toml is already in .gitignore
-#    - Manage client_secret, password, refresh_token via environment variables
+#    - Manage client_secret, password, refresh_token, and api_key via environment variables
 #    - Example: export GCM_CLIENT_SECRET="secret"
 #               export GCM_REFRESH_TOKEN="token"
+#               export GCM_API_KEY="key"
 #
 # 2. File permissions:
 #    chmod 600 config.toml  # Read/write for owner only

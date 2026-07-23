@@ -3,20 +3,58 @@
 2026-06-01T20:26:00Z - Added password grant authentication method.
 2026-06-01T22:37:00Z - Added active profile authentication and automatic token refresh.
 2026-06-01T22:50:00Z - Removed unused device authorization methods, simplified to active profile flow only.
+2026-07-23T00:00:00Z - Added API key authentication as a mutually exclusive auth method.
+                       get_active_profile_token() is the single decision point: it checks
+                       auth_method and branches to either OIDC or API key logic exclusively.
+                       build_api_key_headers() produces the Authorization header for API key requests.
+2026-07-25T00:04:00Z - Fixed API key header: removed token_type header; the stored api_key value
+                       already includes the 'Bearer ' prefix so it is sent as-is in Authorization.
 """
 
+from dataclasses import dataclass
 from typing import Optional
 from sqlalchemy.orm import Session
 import requests
 import urllib3
 from fastapi import HTTPException, status
 
-from app.models.profile import Profile
+from app.models.profile import Profile, AUTH_METHOD_OIDC, AUTH_METHOD_API_KEY
 from app.services.profile_service import ProfileService
 
 
+@dataclass(frozen=True)
+class ApiKeyCredential:
+    """
+    Immutable value object representing a validated API key credential.
+    Carries exactly the two headers required for API key authentication:
+      - Authorization: <api_key>
+      - token_type: api_key
+    Instantiation validates that the key is present and non-empty.
+    """
+    api_key: str
+
+    def __post_init__(self):
+        if not self.api_key or not self.api_key.strip():
+            raise ValueError("api_key must be a non-empty string")
+
+    def to_headers(self) -> dict:
+        """Return the Authorization and token_type headers for API key authentication.
+        The stored api_key already includes the 'Bearer ' prefix.
+        token_type: api_key is mandatory for GCM to recognise API key auth."""
+        return {
+            "Authorization": self.api_key,
+            "token_type": "api_key",
+        }
+
+
 class AuthService:
-    """Service for OIDC and GCM authorization flows using active profile"""
+    """Service for OIDC and GCM authorization flows using active profile.
+
+    Authentication method is determined exclusively by `profile.auth_method`.
+    The single decision point is `get_active_profile_token()` / `build_request_headers()`.
+    When auth_method == 'api_key', no OIDC code is invoked. When auth_method == 'oidc',
+    no API key code is invoked.
+    """
 
     # Build token endpoint URL.
     @staticmethod
@@ -36,7 +74,7 @@ class AuthService:
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         return verify_ssl
 
-    # Build common request headers.
+    # Build common OIDC request headers.
     @staticmethod
     def _headers(profile: Profile, content_type: str = "application/x-www-form-urlencoded") -> dict:
         return {
@@ -44,6 +82,47 @@ class AuthService:
             "User-Agent": profile.user_agent,
             "Accept": "application/json",
         }
+
+    # --- API key authentication ---
+
+    @staticmethod
+    def get_api_key_credential(profile: Profile) -> ApiKeyCredential:
+        """
+        Build and validate the ApiKeyCredential from the active profile.
+
+        Raises:
+            HTTPException 400 if the profile has no api_key configured.
+            HTTPException 422 if the stored api_key value is malformed.
+        """
+        raw = ProfileService.get_decrypted_api_key(profile)
+        if not raw:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Profile auth_method is 'api_key' but no api_key is configured. "
+                    "Please update the profile with a valid API key."
+                ),
+            )
+        try:
+            return ApiKeyCredential(api_key=raw)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Stored api_key is malformed: {exc}",
+            ) from exc
+
+    @staticmethod
+    def build_api_key_headers(profile: Profile) -> dict:
+        """
+        Return the Authorization and token_type headers for an API key request.
+
+        The caller must include these headers verbatim in every outgoing request.
+        Raises HTTPException if the profile is missing or has a malformed api_key.
+        """
+        credential = AuthService.get_api_key_credential(profile)
+        return credential.to_headers()
+
+    # --- OIDC authentication ---
 
     # Authenticate using password grant and get access token directly.
     @staticmethod
@@ -151,14 +230,25 @@ class AuthService:
     @staticmethod
     def authenticate_active_profile(db: Session) -> dict:
         """
-        Authenticate using the active profile's stored username and password.
-        Gets access token from OIDC.
-        
+        Authenticate using the active profile's stored username and password (OIDC only).
+        Raises HTTPException 400 if the active profile uses API key auth — the /login
+        endpoint is not applicable in that case.
+
         Returns:
             dict with access_token, refresh_token, and expires_in
         """
         profile = ProfileService.get_active_profile(db)
-        
+
+        if profile.auth_method == AUTH_METHOD_API_KEY:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "The active profile uses API key authentication. "
+                    "The /auth/login endpoint is for OIDC profiles only. "
+                    "API key credentials do not require a login step."
+                ),
+            )
+
         # Get credentials from profile
         username = ProfileService.get_decrypted_username(profile)
         password = ProfileService.get_decrypted_password(profile)
@@ -177,20 +267,34 @@ class AuthService:
             ProfileService.store_refresh_token(db, profile, result["refresh_token"])
         
         return result
-    
-    # Get a valid access token for the active profile (refresh if needed).
+
+    # --- Single decision point for token/credential resolution ---
+
     @staticmethod
     def get_active_profile_token(db: Session) -> str:
         """
-        Get a valid access token for the active profile.
-        If a refresh token exists, use it. Otherwise, authenticate with username/password.
-        
+        Get a valid access token (OIDC) for the active profile.
+
+        THIS IS THE SINGLE DECISION POINT FOR AUTH METHOD SELECTION.
+        Raises HTTPException 400 if the active profile uses API key auth — callers
+        that need to support both methods should use get_active_profile_headers()
+        instead, which handles both methods and returns ready-to-use headers.
+
         Returns:
-            str: Valid access token
+            str: Valid OIDC access token
         """
         profile = ProfileService.get_active_profile(db)
-        
-        # Try to use refresh token first
+
+        if profile.auth_method == AUTH_METHOD_API_KEY:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "The active profile uses API key authentication. "
+                    "Call get_active_profile_headers() to obtain pre-built request headers."
+                ),
+            )
+
+        # OIDC path: try refresh token first, then fall back to password auth
         if profile.refresh_token:
             try:
                 return AuthService.get_access_token(db, profile)
@@ -216,10 +320,37 @@ class AuthService:
         
         return result["access_token"]
 
+    @staticmethod
+    def get_active_profile_headers(db: Session) -> dict:
+        """
+        Return ready-to-use Authorization headers for the active profile.
+
+        THIS IS THE RECOMMENDED ENTRY POINT FOR SERVICE LAYERS that need to make
+        authenticated requests. It branches exclusively on auth_method:
+
+          - auth_method == 'api_key':  {"Authorization": "<key>", "token_type": "api_key"}
+          - auth_method == 'oidc':     {"Authorization": "Bearer <token>"}
+
+        No OIDC code runs when auth_method is 'api_key'.
+        No API key code runs when auth_method is 'oidc'.
+
+        Raises:
+            HTTPException 400/401/502: if credential retrieval fails for the active method.
+        """
+        profile = ProfileService.get_active_profile(db)
+
+        if profile.auth_method == AUTH_METHOD_API_KEY:
+            # API key path — OIDC is completely bypassed
+            return AuthService.build_api_key_headers(profile)
+
+        # OIDC path — API key code is completely bypassed
+        access_token = AuthService.get_active_profile_token(db)
+        return {"Authorization": f"Bearer {access_token}"}
+
     # Call GCM authorization API.
     @staticmethod
     def authorize(db: Session, profile: Profile, tenant_id: Optional[str] = None) -> dict:
-        """Authorize to GCM using access token."""
+        """Authorize to GCM using access token (OIDC only)."""
         access_token = AuthService.get_access_token(db, profile)
         response = requests.post(
             AuthService._authorization_endpoint(profile),

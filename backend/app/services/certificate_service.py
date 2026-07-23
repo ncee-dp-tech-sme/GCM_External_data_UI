@@ -2,6 +2,25 @@
 2026-06-01T23:32:00Z - Initial creation of certificate service
 2026-06-02T01:27:00Z - Modified upload_certificate to sync from GCM instead of creating local entry
 2026-06-02T17:36:00Z - Fixed delete_certificates to use OR condition for serial_numbers and crypto_ids filters
+2026-07-23T00:00:00Z - Added API key authentication support via AuthService.get_active_profile_headers().
+                       _get_gcm_client_and_headers() replaces _get_authz_client() as the internal
+                       entry point; it routes exclusively through either OIDC or API key auth.
+2026-07-24T00:00:00Z - Fixed NoneType crash: guard oidc_uri with (or "") before rstrip() so api_key
+                       profiles (where oidc_uri is None) no longer cause a 500 on sync.
+2026-07-25T00:00:00Z - Moved logger to module level; added DEBUG logging around GCM requests/responses.
+2026-07-25T00:01:00Z - Treat GCM HTTP 400 + error_code "0x00000000" as an empty result (GCM quirk).
+2026-07-25T00:02:00Z - Fixed sync endpoint: use /crypto_objects/all with Certificate filter instead of
+                       /crypto_objects/certificates (which does not exist). Added crypto_objects key
+                       to response fallback chain.
+2026-07-25T00:03:00Z - Replaced columns:["all"] with specific field list that GCM accepts.
+2026-07-25T00:05:00Z - Fixed response key: /crypto_objects/all returns 'all_crypto_objects', not 'crypto_objects'.
+2026-07-25T00:10:00Z - Extended sync body columns list and _sync_certificate_to_db to capture all GCM
+                       fields: certificate_validity_period, is_short_lived, san, is_exception,
+                       group_updated_at, gcm_created_at, gcm_updated_at.
+2026-07-25T12:00:00Z - Removed columns list and Certificate filter from sync body: GCM returns error 13
+                       when either is present; omitting them (as debug-gcm probe does) fixes the issue.
+2026-07-25T12:30:00Z - Added sync_all_certificates_from_gcm() that paginates until GCM returns fewer
+                       records than page_size so the user does not need to know the total up front.
 Certificate service for managing GCM certificate inventory
 Wraps existing Python modules and provides database operations
 """
@@ -9,6 +28,7 @@ Wraps existing Python modules and provides database operations
 import sys
 import os
 import json
+import logging
 import base64
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime, timedelta
@@ -18,7 +38,7 @@ from fastapi import HTTPException, status
 
 # Add parent directory to path for importing GCM modules
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, '..', '..', '..', '..'))
+PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, '..', '..', '..'))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
@@ -32,52 +52,88 @@ from app.schemas.certificate import (
 )
 from app.services.profile_service import ProfileService
 from app.services.auth_service import AuthService
+from app.models.profile import AUTH_METHOD_API_KEY
 
 # Import GCM modules
 from common.oidc_authz_client import AuthzClient
 
+logger = logging.getLogger(__name__)
+
 
 class CertificateService:
     """Service for managing GCM certificate inventory"""
-    
+
     @staticmethod
-    def _get_authz_client(db: Session) -> Tuple[AuthzClient, str]:
+    def _get_gcm_client_and_headers(db: Session) -> Tuple[AuthzClient, dict]:
         """
-        Get authenticated AuthzClient and access token using active profile
-        
+        Get an AuthzClient and the ready-to-use auth headers for the active profile.
+
+        Branches exclusively on auth_method:
+          - 'oidc':    obtains an OIDC access token, calls the GCM authorization API,
+                       returns Bearer headers.
+          - 'api_key': validates the API key and returns Authorization + token_type headers.
+                       The GCM authorization API call is skipped entirely.
+
         Returns:
-            Tuple of (AuthzClient, access_token)
+            Tuple of (AuthzClient, auth_headers dict)
         """
         profile = ProfileService.get_active_profile(db)
-        
-        # Build config for AuthzClient
+
+        app_uri = profile.app_uri.rstrip("/")
+        # oidc_uri is None for api_key profiles; AuthzClient requires a non-empty value
+        # so fall back to app_uri as a placeholder (it is never used in the api_key path).
+        oidc_uri = (profile.oidc_uri or app_uri).rstrip("/")
+
         config = {
-            "app_uri": profile.app_uri.rstrip("/"),
-            "oidc_uri": profile.oidc_uri.rstrip("/"),
+            "app_uri": app_uri,
+            "oidc_uri": oidc_uri,
             "realm": profile.realm,
             "verify_ssl": not profile.insecure,
             "timeout": profile.timeout,
             "user_agent": profile.user_agent,
         }
-        
-        # Initialize client
         client = AuthzClient(config)
-        
-        # Get access token
+
+        if profile.auth_method == AUTH_METHOD_API_KEY:
+            # API key path — no OIDC token exchange, no authorization API call
+            auth_headers = AuthService.build_api_key_headers(profile)
+            return client, auth_headers
+
+        # OIDC path — no API key code runs
         access_token = AuthService.get_active_profile_token(db)
-        
-        # Call authorization API
         tenant_id = profile.tenant_id or ""
         auth_resp = client.call_authorization_api(access_token, tenant_id=tenant_id)
-        
+        logger.debug("GCM authz API — status: %s  body: %.300s", auth_resp.status_code, auth_resp.text)
         if not auth_resp.ok:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"GCM authorization failed: {auth_resp.text}"
+                detail=f"GCM authorization failed: {auth_resp.text}",
             )
-        
-        return client, access_token
+        return client, {"Authorization": f"Bearer {access_token}"}
     
+    @staticmethod
+    def _gcm_post(client: AuthzClient, auth_headers: dict, path: str, body: dict):
+        """
+        POST to a GCM API path with the pre-built auth_headers.
+
+        Uses client.session directly so that the correct Authorization header
+        (either 'Bearer <token>' for OIDC or raw api_key for API key auth)
+        is sent verbatim without any overriding by AuthzClient internals.
+        """
+        url = f"{client.app_uri}/{path.lstrip('/')}"
+        headers = {
+            "accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        headers.update(auth_headers)
+        return client.session.post(
+            url,
+            headers=headers,
+            json=body,
+            verify=client.verify_ssl,
+            timeout=client.timeout,
+        )
+
     @staticmethod
     def sync_certificates_from_gcm(
         db: Session,
@@ -95,40 +151,61 @@ class CertificateService:
         Returns:
             Dict with sync statistics
         """
-        client, access_token = CertificateService._get_authz_client(db)
-        
-        # Build request body
+        client, auth_headers = CertificateService._get_gcm_client_and_headers(db)
+
+        # Build request body — omit columns and filter; GCM returns error 13 when
+        # either is present (confirmed: debug-gcm probe with bare body succeeds).
         body = {
-            "columns": ["all"],
-            "filter": "",
             "page_number": page_number,
             "page_size": page_size,
+            "filter": "",
             "search_by": "",
             "sort_by": "",
         }
-        
-        # Call GCM API
-        list_path = "ibm/assetinventory/api/v1/assets/crypto_objects/certificates"
-        resp = client.post(list_path, access_token, json_body=body)
+
+        # Call GCM API — /all endpoint with filter is the correct path
+        list_path = "ibm/assetinventory/api/v1/assets/crypto_objects/all"
+        logger.debug("GCM sync request — URL: %s/%s  body: %s", client.app_uri, list_path, json.dumps(body))
+        logger.debug("GCM sync request auth header present: %s", "Authorization" in auth_headers)
+        resp = CertificateService._gcm_post(client, auth_headers, list_path, body)
+        logger.debug("GCM sync response — status: %s  body: %.500s", resp.status_code, resp.text)
         
         if not resp.ok:
+            # GCM returns HTTP 400 with error_code "0x00000000" to signal an empty
+            # result set ("HPDBA0521I Successful completion").  Treat it as zero
+            # certificates rather than a gateway error.
+            try:
+                err = resp.json()
+            except Exception:
+                err = {}
+            if resp.status_code == 400 and err.get("error_code") == "0x00000000":
+                logger.debug("GCM returned 400/0x00000000 (empty result) — treating as no certificates")
+                return {
+                    "total_fetched": 0,
+                    "synced": 0,
+                    "updated": 0,
+                    "errors": [],
+                    "page": page_number,
+                    "page_size": page_size,
+                    "gcm_response_keys": list(err.keys()),
+                    "gcm_total_count": 0,
+                    "debug_info": {"gcm_message": err.get("error_message", "")},
+                }
+            logger.error("GCM cert sync failed — status: %s  body: %s", resp.status_code, resp.text)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"Failed to fetch certificates from GCM: {resp.text}"
             )
         
         data = resp.json()
+        logger.debug("GCM API response keys: %s", list(data.keys()))
         
-        # Debug: Log the response structure
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"GCM API Response keys: {list(data.keys())}")
-        logger.info(f"GCM API Response: {json.dumps(data, indent=2)[:500]}")  # First 500 chars
-        
-        # GCM API returns certificates in 'crypto_certificates' key
-        certificates = data.get("crypto_certificates", [])
-        
-        # Fallback to other possible keys if needed
+        # /crypto_objects/all returns 'all_crypto_objects'
+        certificates = data.get("all_crypto_objects", [])
+        if not certificates:
+            certificates = data.get("crypto_objects", [])
+        if not certificates:
+            certificates = data.get("crypto_certificates", [])
         if not certificates:
             certificates = data.get("data", [])
         if not certificates:
@@ -173,6 +250,89 @@ class CertificateService:
             }
         }
     
+    @staticmethod
+    def sync_all_certificates_from_gcm(
+        db: Session,
+        page_size: int = 100
+    ) -> Dict[str, Any]:
+        """
+        Sync all certificates from GCM by iterating pages until exhausted.
+        Stops when a page returns fewer records than page_size.
+        """
+        client, auth_headers = CertificateService._get_gcm_client_and_headers(db)
+        list_path = "ibm/assetinventory/api/v1/assets/crypto_objects/all"
+
+        total_fetched = 0
+        total_synced = 0
+        total_updated = 0
+        all_errors: list = []
+        page = 1
+
+        while True:
+            body = {
+                "page_number": page,
+                "page_size": page_size,
+                "filter": "",
+                "search_by": "",
+                "sort_by": "",
+            }
+            logger.debug("GCM sync-all page %d — %s", page, list_path)
+            resp = CertificateService._gcm_post(client, auth_headers, list_path, body)
+            logger.debug("GCM sync-all page %d — status: %s  body: %.300s", page, resp.status_code, resp.text)
+
+            if not resp.ok:
+                try:
+                    err = resp.json()
+                except Exception:
+                    err = {}
+                # GCM signals an empty page with 400 + error_code 0x00000000
+                if resp.status_code == 400 and err.get("error_code") == "0x00000000":
+                    logger.debug("GCM returned 400/0x00000000 on page %d — treating as end of results", page)
+                    break
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Failed to fetch certificates from GCM (page {page}): {resp.text}",
+                )
+
+            data = resp.json()
+            certificates = (
+                data.get("all_crypto_objects")
+                or data.get("crypto_objects")
+                or data.get("crypto_certificates")
+                or data.get("data")
+                or data.get("certificates")
+                or data.get("results")
+                or []
+            )
+
+            for cert_data in certificates:
+                try:
+                    cert = CertificateService._sync_certificate_to_db(db, cert_data)
+                    if cert:
+                        total_synced += 1
+                    else:
+                        total_updated += 1
+                except Exception as e:
+                    all_errors.append({"crypto_id": cert_data.get("crypto_id"), "error": str(e)})
+
+            db.commit()
+            total_fetched += len(certificates)
+            logger.debug("GCM sync-all page %d — fetched %d, running total %d", page, len(certificates), total_fetched)
+
+            # Stop when this page was not full — no more pages left
+            if len(certificates) < page_size:
+                break
+
+            page += 1
+
+        return {
+            "total_fetched": total_fetched,
+            "synced": total_synced,
+            "updated": total_updated,
+            "errors": all_errors,
+            "pages": page,
+        }
+
     @staticmethod
     def _parse_bool(value: Any) -> bool:
         """
@@ -283,11 +443,23 @@ class CertificateService:
         cert.exploitability_score = cert_data.get("exploitability_score")
         cert.object_status = cert_data.get("object_status")
         cert.auto_renewal_status = cert_data.get("auto_renewal_status")
-        
+
+        # Additional boolean flags
+        cert.is_short_lived = CertificateService._parse_bool(cert_data.get("is_short_lived")) if cert_data.get("is_short_lived") is not None else None
+        cert.is_exception = CertificateService._parse_bool(cert_data.get("is_exception")) if cert_data.get("is_exception") is not None else None
+
+        # Validity period string
+        cert.certificate_validity_period = cert_data.get("certificate_validity_period")
+
+        # Subject Alternative Names — store as JSON
+        san = cert_data.get("san")
+        if san is not None:
+            cert.san = json.dumps(san)
+
         # Discovery and tracking
         if cert_data.get("discovery_sources"):
             cert.discovery_sources = json.dumps(cert_data["discovery_sources"])
-        
+
         # Parse first_seen and last_seen dates
         first_seen = cert_data.get("first_seen")
         if first_seen:
@@ -295,14 +467,27 @@ class CertificateService:
                 cert.first_seen = datetime.fromisoformat(first_seen.replace("Z", "+00:00"))
             except:
                 pass
-        
+
         last_seen = cert_data.get("last_seen")
         if last_seen:
             try:
                 cert.last_seen = datetime.fromisoformat(last_seen.replace("Z", "+00:00"))
             except:
                 pass
-        
+
+        # GCM-side created_at / updated_at / group_updated_at
+        for attr, key in [
+            ("gcm_created_at", "created_at"),
+            ("gcm_updated_at", "updated_at"),
+            ("group_updated_at", "group_updated_at"),
+        ]:
+            raw = cert_data.get(key)
+            if raw:
+                try:
+                    setattr(cert, attr, datetime.fromisoformat(raw.replace("Z", "+00:00")))
+                except:
+                    pass
+
         cert.last_synced_at = datetime.utcnow()
         
         if is_new:
@@ -440,12 +625,12 @@ class CertificateService:
         Returns:
             Synced certificate from database
         """
-        client, access_token = CertificateService._get_authz_client(db)
-        
+        client, auth_headers = CertificateService._get_gcm_client_and_headers(db)
+
         # Parse URI
         uri = cert_upload.uri.strip()
         alias = cert_upload.alias or CertificateService._generate_alias(uri)
-        
+
         # Build ingest body
         body = {
             "crypto_object_certs": {
@@ -460,10 +645,10 @@ class CertificateService:
                 "tag_ids": [],
             }
         }
-        
+
         # POST to GCM
         ingest_path = "ibm/assetinventory/api/v1/assets/ingest/crypto_objects/certificate_from_file"
-        resp = client.post(ingest_path, access_token, json_body=body)
+        resp = CertificateService._gcm_post(client, auth_headers, ingest_path, body)
         
         if not resp.ok:
             raise HTTPException(
@@ -523,8 +708,8 @@ class CertificateService:
         Returns:
             Dict with deletion statistics
         """
-        client, access_token = CertificateService._get_authz_client(db)
-        
+        client, auth_headers = CertificateService._get_gcm_client_and_headers(db)
+
         # Collect serial numbers and crypto IDs
         serial_numbers = delete_request.serial_numbers or []
         crypto_ids = delete_request.crypto_ids or []
@@ -555,7 +740,7 @@ class CertificateService:
         
         # Call GCM delete API
         delete_path = "ibm/assetinventory/api/v1/assets/delete/crypto_objects/certificates"
-        resp = client.post(delete_path, access_token, json_body=body)
+        resp = CertificateService._gcm_post(client, auth_headers, delete_path, body)
         
         if not resp.ok:
             raise HTTPException(

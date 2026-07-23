@@ -1,4 +1,7 @@
 // 2026-06-02T01:41:00Z - Created IT asset management functions for GCM Web UI
+// 2026-07-25T00:00:00Z - Expanded viewAssetDetails() to show all GCM fields: asset_id,
+//   discovery_sources, contains_classified_data, is_encrypted, total_violation,
+//   total_pqc_violation, pqc_readiness_flag, exploitability_score, is_exception.
 
 /**
  * IT Asset Management Functions
@@ -280,12 +283,18 @@ async function viewAssetDetails(assetId) {
                     </div>
                     <div class="detail-item">
                         <strong>Port:</strong>
-                        <span>${asset.port || 'N/A'}</span>
+                        <span>${asset.port !== null && asset.port !== undefined ? asset.port : 'N/A'}</span>
                     </div>
                     <div class="detail-item">
                         <strong>Protocol:</strong>
                         <span>${escapeHtml(asset.protocol || 'N/A')}</span>
                     </div>
+                    ${asset.protocol_version && asset.protocol_version.length > 0 ? `
+                    <div class="detail-item">
+                        <strong>Protocol Versions:</strong>
+                        <span>${asset.protocol_version.map(v => escapeHtml(v)).join(', ')}</span>
+                    </div>
+                    ` : ''}
                     <div class="detail-item">
                         <strong>Asset Type:</strong>
                         <span class="badge badge-info">${escapeHtml(asset.asset_type || 'Unknown')}</span>
@@ -296,7 +305,55 @@ async function viewAssetDetails(assetId) {
                         <span>${escapeHtml(asset.asset_sub_type)}</span>
                     </div>
                     ` : ''}
+                    ${asset.asset_id ? `
+                    <div class="detail-item">
+                        <strong>GCM Asset ID:</strong>
+                        <span style="font-family: monospace; font-size: 0.85em;">${escapeHtml(asset.asset_id)}</span>
+                    </div>
+                    ` : ''}
                 </div>
+
+                ${asset.servicename || asset.databasename || asset.databasetype || asset.version || asset.application_id || asset.patch ? `
+                <h5 class="mt-4">Service / Application / Database</h5>
+                <div class="detail-grid">
+                    ${asset.servicename ? `
+                    <div class="detail-item">
+                        <strong>Service Name:</strong>
+                        <span>${escapeHtml(asset.servicename)}</span>
+                    </div>
+                    ` : ''}
+                    ${asset.databasename ? `
+                    <div class="detail-item">
+                        <strong>Database Name:</strong>
+                        <span>${escapeHtml(asset.databasename)}</span>
+                    </div>
+                    ` : ''}
+                    ${asset.databasetype ? `
+                    <div class="detail-item">
+                        <strong>Database Type:</strong>
+                        <span>${escapeHtml(asset.databasetype)}</span>
+                    </div>
+                    ` : ''}
+                    ${asset.version ? `
+                    <div class="detail-item">
+                        <strong>Version:</strong>
+                        <span>${escapeHtml(asset.version)}</span>
+                    </div>
+                    ` : ''}
+                    ${asset.application_id ? `
+                    <div class="detail-item">
+                        <strong>Application ID:</strong>
+                        <span>${escapeHtml(asset.application_id)}</span>
+                    </div>
+                    ` : ''}
+                    ${asset.patch ? `
+                    <div class="detail-item">
+                        <strong>Patch Level:</strong>
+                        <span>${escapeHtml(asset.patch)}</span>
+                    </div>
+                    ` : ''}
+                </div>
+                ` : ''}
                 
                 <h5 class="mt-4">Organizational</h5>
                 <div class="detail-grid">
@@ -330,6 +387,12 @@ async function viewAssetDetails(assetId) {
                         <span>${asset.tech_contacts.map(c => escapeHtml(c)).join(', ')}</span>
                     </div>
                     ` : ''}
+                    ${asset.discovery_sources && asset.discovery_sources.length > 0 ? `
+                    <div class="detail-item">
+                        <strong>Discovery Sources:</strong>
+                        <span>${asset.discovery_sources.map(s => escapeHtml(s)).join(', ')}</span>
+                    </div>
+                    ` : ''}
                 </div>
                 
                 <h5 class="mt-4">Security & Compliance</h5>
@@ -344,6 +407,48 @@ async function viewAssetDetails(assetId) {
                     <div class="detail-item">
                         <strong>Internet Facing:</strong>
                         <span class="badge ${asset.internet_facing === 'TRUE' ? 'badge-warning' : 'badge-success'}">${asset.internet_facing}</span>
+                    </div>
+                    ` : ''}
+                    ${asset.contains_classified_data ? `
+                    <div class="detail-item">
+                        <strong>Contains Classified Data:</strong>
+                        <span class="badge ${asset.contains_classified_data === 'TRUE' ? 'badge-danger' : 'badge-success'}">${asset.contains_classified_data}</span>
+                    </div>
+                    ` : ''}
+                    ${asset.is_encrypted ? `
+                    <div class="detail-item">
+                        <strong>Is Encrypted:</strong>
+                        <span class="badge ${asset.is_encrypted === 'TRUE' ? 'badge-success' : 'badge-warning'}">${asset.is_encrypted}</span>
+                    </div>
+                    ` : ''}
+                    ${asset.is_exception ? `
+                    <div class="detail-item">
+                        <strong>Is Exception:</strong>
+                        <span class="badge ${asset.is_exception === 'TRUE' ? 'badge-warning' : 'badge-success'}">${asset.is_exception}</span>
+                    </div>
+                    ` : ''}
+                    ${asset.pqc_readiness_flag ? `
+                    <div class="detail-item">
+                        <strong>PQC Readiness:</strong>
+                        <span class="badge ${asset.pqc_readiness_flag === 'PQC_SAFE' ? 'badge-success' : 'badge-danger'}">${escapeHtml(asset.pqc_readiness_flag)}</span>
+                    </div>
+                    ` : ''}
+                    ${asset.total_violation !== null && asset.total_violation !== undefined ? `
+                    <div class="detail-item">
+                        <strong>Total Violations:</strong>
+                        <span class="badge ${asset.total_violation > 0 ? 'badge-danger' : 'badge-success'}">${asset.total_violation}</span>
+                    </div>
+                    ` : ''}
+                    ${asset.total_pqc_violation !== null && asset.total_pqc_violation !== undefined ? `
+                    <div class="detail-item">
+                        <strong>PQC Violations:</strong>
+                        <span class="badge ${asset.total_pqc_violation > 0 ? 'badge-danger' : 'badge-success'}">${asset.total_pqc_violation}</span>
+                    </div>
+                    ` : ''}
+                    ${asset.exploitability_score !== null && asset.exploitability_score !== undefined ? `
+                    <div class="detail-item">
+                        <strong>Exploitability Score:</strong>
+                        <span class="badge ${asset.exploitability_score >= 7 ? 'badge-danger' : asset.exploitability_score >= 4 ? 'badge-warning' : 'badge-success'}">${asset.exploitability_score}</span>
                     </div>
                     ` : ''}
                 </div>
@@ -372,6 +477,12 @@ async function viewAssetDetails(assetId) {
                     <div class="detail-item">
                         <strong>Last Seen:</strong>
                         <span>${new Date(asset.last_seen).toLocaleString()}</span>
+                    </div>
+                    ` : ''}
+                    ${asset.object_status ? `
+                    <div class="detail-item">
+                        <strong>Object Status:</strong>
+                        <span>${escapeHtml(asset.object_status)}</span>
                     </div>
                     ` : ''}
                     <div class="detail-item">

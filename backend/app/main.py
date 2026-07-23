@@ -1,5 +1,7 @@
 """
 2026-06-01T23:17:00Z - Added static file serving for frontend UI
+2026-07-25T00:00:00Z - Wire settings.log_level into Python logging on startup
+2026-07-25T00:00:00Z - Call migrate_db() on startup to add new columns to existing tables
 Main FastAPI application
 Entry point for the GCM Web UI backend
 """
@@ -9,11 +11,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
+import logging
 import os
 
 from app.config import settings
-from app.database import init_db
+from app.database import init_db, migrate_db
 from app.api import api_router
+
+# Apply log level from settings immediately at import time so all loggers
+# (including those in services) respect the configured level.
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 
 @asynccontextmanager
@@ -22,9 +32,10 @@ async def lifespan(app: FastAPI):
     Application lifespan events
     Runs on startup and shutdown
     """
-    # Startup: Initialize database
+    # Startup: Initialize database and apply column migrations
     print("Initializing database...")
     init_db()
+    migrate_db()
     print("Database initialized successfully")
     
     yield

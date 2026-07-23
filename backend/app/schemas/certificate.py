@@ -1,5 +1,8 @@
 """
 2026-06-01T23:31:00Z - Initial creation of certificate schemas
+2026-07-25T00:10:00Z - Added new fields to CertificateResponse: certificate_validity_period,
+                       is_short_lived, is_exception, san, gcm_created_at, gcm_updated_at,
+                       group_updated_at
 Certificate Pydantic schemas for API request/response validation
 """
 
@@ -64,11 +67,26 @@ class CertificateResponse(CertificateBase):
     object_status: Optional[str] = None
     auto_renewal_status: Optional[str] = None
     
+    # Additional GCM boolean flags
+    is_short_lived: Optional[bool] = None
+    is_exception: Optional[bool] = None
+
+    # Certificate validity period string (e.g. "606 days")
+    certificate_validity_period: Optional[str] = None
+
+    # Subject Alternative Names (JSON string of list of {type_id, value})
+    san: Optional[str] = None
+
     # Discovery and tracking
     discovery_sources: Optional[str] = None  # JSON string
     first_seen: Optional[datetime] = None
     last_seen: Optional[datetime] = None
-    
+
+    # GCM-side timestamps
+    gcm_created_at: Optional[datetime] = None
+    gcm_updated_at: Optional[datetime] = None
+    group_updated_at: Optional[datetime] = None
+
     # Timestamps
     created_at: datetime
     updated_at: Optional[datetime] = None

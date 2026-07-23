@@ -3,11 +3,17 @@ IT Asset Pydantic schemas for request/response validation.
 
 Created: 2026-06-02
 Last Modified: 2026-06-02
+Changes:
+- 2026-07-25: Added new GCM security fields to ITAssetResponse: total_violation,
+  pqc_readiness_flag, exploitability_score, is_exception.
+- 2026-07-25: Added confirmed GCM column fields to all schemas: protocol_version,
+  servicename, databasename, databasetype, version, application_id, patch.
+  Removed contains_classified_data, is_encrypted, total_pqc_violation (not in GCM payload).
 """
 
 from typing import Optional, List, Dict, Any
 from datetime import datetime
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field
 
 
 class ITAssetBase(BaseModel):
@@ -17,8 +23,15 @@ class ITAssetBase(BaseModel):
     hostname: Optional[str] = Field(None, description="Hostname")
     port: Optional[int] = Field(None, description="Port number")
     protocol: Optional[str] = Field(None, description="Protocol (e.g., TLS, TCP)")
+    protocol_version: Optional[List[str]] = Field(None, description="Protocol versions (e.g., ['TLSv1.3', 'TLSv1.2'])")
     asset_type: Optional[str] = Field(None, description="Asset type (Database, Service, Application)")
     asset_sub_type: Optional[str] = Field(None, description="Asset sub-type (e.g., MySQL)")
+    servicename: Optional[str] = Field(None, description="Service name")
+    databasename: Optional[str] = Field(None, description="Database name")
+    databasetype: Optional[str] = Field(None, description="Database type")
+    version: Optional[str] = Field(None, description="Software version")
+    application_id: Optional[str] = Field(None, description="GCM application ID")
+    patch: Optional[str] = Field(None, description="Patch level")
     owner: Optional[str] = Field(None, description="Asset owner")
     tech_contacts: Optional[List[str]] = Field(None, description="Technical contacts")
     environment: Optional[str] = Field(None, description="Environment (Staging, Production)")
@@ -26,12 +39,15 @@ class ITAssetBase(BaseModel):
     network: Optional[str] = Field(None, description="Network zone")
     mission_criticality: Optional[int] = Field(None, description="Mission criticality score")
     internet_facing: Optional[str] = Field(None, description="Internet facing (DEFAULT, UNKNOWN, TRUE, FALSE)")
+    total_violation: Optional[int] = Field(None, description="Total violations")
+    pqc_readiness_flag: Optional[str] = Field(None, description="PQC readiness (PQC_SAFE, PQC_UNSAFE)")
+    exploitability_score: Optional[float] = Field(None, description="Exploitability score")
+    is_exception: Optional[str] = Field(None, description="Exception flag (TRUE/FALSE)")
     extensions: Optional[Dict[str, Any]] = Field(None, description="Custom attributes")
 
 
 class ITAssetCreate(ITAssetBase):
     """Schema for creating a new IT asset."""
-    # For creation, require core fields
     ip: str = Field(..., description="IP address (required for creation)")
     hostname: str = Field(..., description="Hostname (required for creation)")
     port: int = Field(..., description="Port number (required for creation)")
@@ -45,8 +61,15 @@ class ITAssetUpdate(BaseModel):
     hostname: Optional[str] = None
     port: Optional[int] = None
     protocol: Optional[str] = None
+    protocol_version: Optional[str] = None
     asset_type: Optional[str] = None
     asset_sub_type: Optional[str] = None
+    servicename: Optional[str] = None
+    databasename: Optional[str] = None
+    databasetype: Optional[str] = None
+    version: Optional[str] = None
+    application_id: Optional[str] = None
+    patch: Optional[str] = None
     owner: Optional[str] = None
     tech_contacts: Optional[List[str]] = None
     environment: Optional[str] = None
@@ -54,6 +77,10 @@ class ITAssetUpdate(BaseModel):
     network: Optional[str] = None
     mission_criticality: Optional[int] = None
     internet_facing: Optional[str] = None
+    total_violation: Optional[int] = None
+    pqc_readiness_flag: Optional[str] = None
+    exploitability_score: Optional[float] = None
+    is_exception: Optional[str] = None
     extensions: Optional[Dict[str, Any]] = None
 
 

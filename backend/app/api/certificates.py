@@ -2,12 +2,15 @@
 2026-06-01T23:33:00Z - Initial creation of certificate API endpoints
 Certificate management API endpoints
 Handles CRUD operations for GCM certificate inventory
+2026-07-25T00:04:00Z - Added /debug-gcm probe endpoint for diagnosing GCM connectivity and filter issues.
+2026-07-25T12:30:00Z - Added /sync/all endpoint that paginates GCM until exhausted.
 """
 
 from fastapi import APIRouter, Depends, status, Query
 from sqlalchemy.orm import Session
 from typing import Optional
 import math
+import json
 
 from app.database import get_db
 from app.schemas.certificate import (
@@ -41,6 +44,62 @@ def sync_certificates(
     """
     result = CertificateService.sync_certificates_from_gcm(db, page_number, page_size)
     return result
+
+
+@router.post("/sync/all", status_code=status.HTTP_200_OK)
+def sync_all_certificates(
+    page_size: int = Query(100, ge=1, le=500, description="Certificates per GCM page"),
+    db: Session = Depends(get_db)
+):
+    """
+    Sync ALL certificates from GCM by iterating pages until none remain.
+    The caller does not need to know the total count in advance.
+    """
+    result = CertificateService.sync_all_certificates_from_gcm(db, page_size)
+    return result
+
+
+@router.get("/debug-gcm", status_code=status.HTTP_200_OK)
+def debug_gcm_probe(db: Session = Depends(get_db)):
+    """
+    Diagnostic probe: fires one request using the same auth path as sync,
+    captures exact wire headers, and returns the GCM response.
+    Remove before deploying to production.
+    """
+    from app.services.certificate_service import CertificateService
+    import requests as _requests
+
+    # Build client + headers exactly as sync does
+    client, auth_headers = CertificateService._get_gcm_client_and_headers(db)
+
+    # Intercept the single outgoing request to record its exact wire headers
+    captured: dict = {}
+
+    class CapturingSession(_requests.Session):
+        def send(self, request, **kwargs):
+            captured.update(dict(request.headers))
+            return super().send(request, **kwargs)
+
+    client.session = CapturingSession()
+
+    bare_body = {"page_number": 1, "page_size": 5, "filter": "", "sort_by": "", "search_by": ""}
+    resp = CertificateService._gcm_post(client, auth_headers, "ibm/assetinventory/api/v1/assets/crypto_objects/all", bare_body)
+    try:
+        resp_body = resp.json()
+    except Exception:
+        resp_body = resp.text[:500]
+
+    # Redact Authorization to first 20 chars
+    redacted = {
+        k: (v[:20] + "...") if k.lower() == "authorization" and len(v) > 20 else v
+        for k, v in captured.items()
+    }
+
+    return {
+        "exact_wire_headers": redacted,
+        "gcm_status": resp.status_code,
+        "gcm_response": resp_body,
+    }
 
 
 @router.get("/", response_model=CertificateListResponse)

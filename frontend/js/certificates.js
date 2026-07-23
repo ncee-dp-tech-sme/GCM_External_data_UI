@@ -1,4 +1,5 @@
 // 2026-06-02T00:02:00Z - Created certificate management functions for GCM Web UI
+// 2026-07-25T00:10:00Z - Added SAN table, Validity & Flags section, and GCM timestamps to details modal
 
 /**
  * Certificate Management Functions
@@ -225,16 +226,18 @@ function updatePagination(page, total, count) {
     document.getElementById('certNextPage').disabled = page >= total;
 }
 
-// Sync certificates from GCM
+// Sync all certificates from GCM (paginates until exhausted)
 async function syncCertificates() {
     const btn = event?.target;
     if (btn) setButtonLoading(btn, true);
     
     try {
-        showToast('Syncing certificates from GCM...', 'info');
-        const result = await api.syncCertificates(1, 300);
+        showToast('Syncing all certificates from GCM — this may take a moment...', 'info');
+        const result = await api.syncAllCertificates(100);
         
-        showToast(`Synced ${result.synced} certificates successfully!`, 'success');
+        const total = result.total_fetched;
+        const pages = result.pages;
+        showToast(`Synced ${total} certificates (${pages} page${pages !== 1 ? 's' : ''}) successfully!`, 'success');
         
         // Reload the page
         await loadCertificates();
@@ -421,7 +424,43 @@ async function viewCertificateDetails(certificateId) {
                         </div>
                     </div>
                 </div>
-                
+
+                ${cert.certificate_validity_period || cert.is_short_lived !== undefined || cert.is_exception !== undefined ? `
+                <div class="detail-section">
+                    <h4>Validity & Flags</h4>
+                    <div class="detail-grid">
+                        ${cert.certificate_validity_period ? `
+                        <div class="detail-item">
+                            <span class="detail-label">Validity Period:</span>
+                            <span class="detail-value">${cert.certificate_validity_period}</span>
+                        </div>
+                        ` : ''}
+                        <div class="detail-item">
+                            <span class="detail-label">Short-Lived:</span>
+                            <span class="detail-value">${cert.is_short_lived ? 'Yes' : 'No'}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Exception:</span>
+                            <span class="detail-value">${cert.is_exception ? 'Yes' : 'No'}</span>
+                        </div>
+                    </div>
+                </div>
+                ` : ''}
+
+                ${cert.san ? (() => {
+                    let sanList = [];
+                    try { sanList = JSON.parse(cert.san); } catch(e) {}
+                    if (!sanList.length) return '';
+                    return `<div class="detail-section">
+                    <h4>Subject Alternative Names (SAN)</h4>
+                    <table class="data-table" style="font-size:0.85em;">
+                        <thead><tr><th>Type</th><th>Value</th></tr></thead>
+                        <tbody>
+                            ${sanList.map(s => `<tr><td>${s.type_id || ''}</td><td>${s.value || ''}</td></tr>`).join('')}
+                        </tbody>
+                    </table></div>`;
+                })() : ''}
+
                 ${cert.pqc_readiness_flag || cert.total_violation || cert.exploitability_score ? `
                 <div class="detail-section">
                     <h4>Security & Compliance</h4>
@@ -466,7 +505,7 @@ async function viewCertificateDetails(certificateId) {
                 </div>
                 ` : ''}
                 
-                ${cert.first_seen || cert.last_seen || cert.auto_renewal_status ? `
+                ${cert.first_seen || cert.last_seen || cert.auto_renewal_status || cert.gcm_created_at || cert.gcm_updated_at || cert.group_updated_at ? `
                 <div class="detail-section">
                     <h4>Tracking & Management</h4>
                     <div class="detail-grid">
@@ -480,6 +519,24 @@ async function viewCertificateDetails(certificateId) {
                         <div class="detail-item">
                             <span class="detail-label">Last Seen:</span>
                             <span class="detail-value">${formatDateTime(cert.last_seen)}</span>
+                        </div>
+                        ` : ''}
+                        ${cert.gcm_created_at ? `
+                        <div class="detail-item">
+                            <span class="detail-label">GCM Created At:</span>
+                            <span class="detail-value">${formatDateTime(cert.gcm_created_at)}</span>
+                        </div>
+                        ` : ''}
+                        ${cert.gcm_updated_at ? `
+                        <div class="detail-item">
+                            <span class="detail-label">GCM Updated At:</span>
+                            <span class="detail-value">${formatDateTime(cert.gcm_updated_at)}</span>
+                        </div>
+                        ` : ''}
+                        ${cert.group_updated_at ? `
+                        <div class="detail-item">
+                            <span class="detail-label">Group Updated At:</span>
+                            <span class="detail-value">${formatDateTime(cert.group_updated_at)}</span>
                         </div>
                         ` : ''}
                         ${cert.auto_renewal_status ? `

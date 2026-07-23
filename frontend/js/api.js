@@ -110,6 +110,12 @@ class APIClient {
         });
     }
 
+    async syncAllCertificates(pageSize = 100) {
+        return this.request(`/certificates/sync/all?page_size=${pageSize}`, {
+            method: 'POST'
+        });
+    }
+
     async getCertificates(filters = {}) {
         const params = new URLSearchParams();
         if (filters.search) params.append('search', filters.search);
