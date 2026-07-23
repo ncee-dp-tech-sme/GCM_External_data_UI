@@ -19,6 +19,8 @@ Last Modified: 2026-07-25 00:00 UTC - Added crypto-weakness detection (expired c
 Last Modified: 2026-07-25 00:01 UTC - Added SSH alternative ports 2222/22222 to _PLAINTEXT_PORTS; fixed
                                        LEGACY_SSH_KEX detection; ssh_host_key_fingerprint now stores cleaned
                                        comma-separated algorithm list for clearer UI display.
+Last Modified: 2026-07-25 00:02 UTC - Added ingest_keys_from_results() for SSH host keys to GCM /v2/keys
+                                       and ingest_protocols_from_results() for TLS to GCM /v2/protocols.
 """
 
 import sys
@@ -415,6 +417,179 @@ class ScannerService:
 
         except Exception as e:
             errors.append(f"Import error: {str(e)}")
+
+        return imported_count, failed_count, errors
+
+    @staticmethod
+    def _build_gcm_client(profile_data: Dict[str, Any]) -> "AuthzClient":
+        """Build an AuthzClient from profile_data dict."""
+        app_uri = profile_data.get("app_uri", "").rstrip("/")
+        oidc_uri = (profile_data.get("oidc_uri") or app_uri).rstrip("/")
+        return AuthzClient({
+            "app_uri": app_uri,
+            "oidc_uri": oidc_uri,
+            "realm": profile_data.get("realm", "gcmrealm"),
+            "verify_ssl": not profile_data.get("insecure", False),
+            "timeout": profile_data.get("timeout", 30.0),
+            "user_agent": "gcm-webui-scanner-service/1.0",
+        })
+
+    @staticmethod
+    def ingest_keys_from_results(
+        results: List[Dict[str, Any]],
+        profile_data: Dict[str, Any],
+        auth_headers: Dict[str, Any],
+    ) -> Tuple[int, int, List[str]]:
+        """
+        Ingest SSH host keys from scan results into GCM /v2/assets/ingest/crypto_objects/keys.
+        Only processes results where service == 'ssh' and ssh_host_key_type is present.
+        Returns (imported, failed, errors).
+        """
+        imported_count = 0
+        failed_count = 0
+        errors: List[str] = []
+
+        if not auth_headers.get("Authorization"):
+            return 0, 0, ["Missing Authorization header — check active profile credentials."]
+
+        ssh_results = [
+            r for r in results
+            if r.get("service") == "ssh" and r.get("ssh_host_key_type") and r.get("success")
+        ]
+        if not ssh_results:
+            return 0, 0, []
+
+        try:
+            client = ScannerService._build_gcm_client(profile_data)
+            ingest_path = "ibm/assetinventory/api/v2/assets/ingest/crypto_objects/keys"
+
+            for r in ssh_results:
+                alias    = r.get("alias", "")
+                uri      = r.get("uri", "")
+                key_type = r.get("ssh_host_key_type", "")
+                alg_list = r.get("ssh_host_key_fingerprint", "")  # comma-sep algorithm string
+
+                # Estimate key length from key type name
+                key_length = 0
+                if "rsa" in key_type:
+                    key_length = 2048  # conservative default; actual bits not captured in handshake
+                elif "ed25519" in key_type:
+                    key_length = 256
+                elif "nistp256" in key_type or "p256" in key_type:
+                    key_length = 256
+                elif "nistp384" in key_type or "p384" in key_type:
+                    key_length = 384
+                elif "nistp521" in key_type or "p521" in key_type:
+                    key_length = 521
+
+                body = {
+                    "crypto_object_keys": [
+                        {
+                            "crypto_object_name": alias,
+                            "key_algorithm": key_type,
+                            "key_type": "PUBLIC",
+                            "key_usage": "AUTHENTICATION",
+                            "key_length": key_length,
+                            "discovery_sources": ["GCM-Scanner"],
+                            "origin_source": "DISCOVERED",
+                            "relationships": [
+                                {
+                                    "asset_identifiers": {"uri": uri},
+                                    "asset_type": "IT_ASSET",
+                                    "relationship_type": "HOSTED_ON",
+                                }
+                            ],
+                            "extensions": {
+                                "ssh_advertised_algorithms": alg_list,
+                            },
+                        }
+                    ],
+                    "detailed_response": True,
+                }
+
+                try:
+                    resp = ScannerService._gcm_post(client, auth_headers, ingest_path, body)
+                    if resp.ok:
+                        imported_count += 1
+                    else:
+                        failed_count += 1
+                        errors.append(f"{alias}: HTTP {resp.status_code} - {resp.text[:100]}")
+                except Exception as e:
+                    failed_count += 1
+                    errors.append(f"{alias}: {str(e)}")
+
+        except Exception as e:
+            errors.append(f"Key ingest error: {str(e)}")
+
+        return imported_count, failed_count, errors
+
+    @staticmethod
+    def ingest_protocols_from_results(
+        results: List[Dict[str, Any]],
+        profile_data: Dict[str, Any],
+        auth_headers: Dict[str, Any],
+    ) -> Tuple[int, int, List[str]]:
+        """
+        Ingest TLS protocol metadata from scan results into GCM /v2/assets/ingest/crypto_objects/protocols.
+        Only processes results where service == 'tls' and tls_version is present.
+        Returns (imported, failed, errors).
+        """
+        imported_count = 0
+        failed_count = 0
+        errors: List[str] = []
+
+        if not auth_headers.get("Authorization"):
+            return 0, 0, ["Missing Authorization header — check active profile credentials."]
+
+        tls_results = [
+            r for r in results
+            if r.get("service") == "tls" and r.get("tls_version") and r.get("success")
+        ]
+        if not tls_results:
+            return 0, 0, []
+
+        try:
+            client = ScannerService._build_gcm_client(profile_data)
+            ingest_path = "ibm/assetinventory/api/v2/assets/ingest/crypto_objects/protocols"
+
+            for r in tls_results:
+                alias   = r.get("alias", "")
+                uri     = r.get("uri", "")
+                tls_ver = r.get("tls_version", "")
+                cipher  = r.get("cipher_suite", "")
+
+                body = {
+                    "crypto_object_protocols": [
+                        {
+                            "crypto_object_name": alias,
+                            "protocol": "TLS",
+                            "it_asset_uri": uri,
+                            "discovery_sources": ["GCM-Scanner"],
+                            "protocols": [
+                                {
+                                    "version": tls_ver,
+                                    "ciphers": [cipher] if cipher else [],
+                                }
+                            ],
+                            "relationship_type": "HOSTED_ON",
+                        }
+                    ],
+                    "detailed_response": True,
+                }
+
+                try:
+                    resp = ScannerService._gcm_post(client, auth_headers, ingest_path, body)
+                    if resp.ok:
+                        imported_count += 1
+                    else:
+                        failed_count += 1
+                        errors.append(f"{alias}: HTTP {resp.status_code} - {resp.text[:100]}")
+                except Exception as e:
+                    failed_count += 1
+                    errors.append(f"{alias}: {str(e)}")
+
+        except Exception as e:
+            errors.append(f"Protocol ingest error: {str(e)}")
 
         return imported_count, failed_count, errors
 
@@ -927,7 +1102,7 @@ class ScannerService:
                     "tls_version": None, "cipher_suite": None,
                     "cert_subject": None, "cert_issuer": None, "cert_not_after": None,
                     "ssh_host_key_type": None, "ssh_host_key_fingerprint": None,
-                    "error": "Missing URI",
+                    "findings": [], "error": "Missing URI",
                 }
                 results.append(result)
                 yield {

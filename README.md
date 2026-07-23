@@ -301,7 +301,7 @@ The sync captures all GCM asset fields using the confirmed payload:
 
 ### Disconnected Scanner
 
-The scanner page provides a guided three-step workflow for discovering and importing SSL certificates from hosts that may not be directly reachable from GCM. Scans run as a **real-time streaming operation** — progress is shown target-by-target and can be stopped at any time.
+The scanner page provides a guided three-step workflow for discovering and importing crypto objects (TLS certificates, SSH host keys, and TLS protocol metadata) from hosts that may not be directly reachable from GCM. Scans run as a **real-time streaming operation** — progress is shown target-by-target and can be stopped at any time.
 
 **Step 1 — Generate Targets (Optional)**
 1. Go to the **Scanner** tab.
@@ -316,7 +316,9 @@ The scanner page provides a guided three-step workflow for discovering and impor
 4. Click **Run Scan**.
    - A progress bar shows the current target (`host:port`) being probed in real time.
    - Click **Stop Scan** at any time to halt after the current target finishes.
-5. Results appear row-by-row as each probe completes. Download the resulting `Alias, Certdata, URI` certificates CSV when done.
+5. Results appear row-by-row as each probe completes. When the scan finishes, action buttons appear above the results table:
+   - **⬇️ Download Certificates CSV** — saves the `Alias, Certdata, URI` CSV for offline use.
+   - **Next: Import Certificates →** — navigates to Step 3.
 
 **Protocol detection per target:**
 
@@ -342,17 +344,26 @@ SSH is detected automatically on standard port `22` and common alternatives `222
 | `WEAK SSH KEY` | Server's preferred host key is `ssh-rsa` (SHA-1 based, deprecated) |
 | `LEGACY SSH KEX` | Server advertises `ssh-rsa` but no `rsa-sha2-*` variants |
 
-**Step 3 — Import Certificates**
-1. Optionally upload a certificates CSV. Leave empty to use the CSV produced by Step 2.
-2. Click **Import Certificates**. Each row is validated then posted to the GCM certificate ingest API using the active profile's credentials.
-3. Review the import summary (imported / failed counts and any errors).
+**Step 3 — Import Scan Results into GCM**
+
+When a scan was run in Step 2, a summary shows the number of each object type ready to import. Click **📤 Import All to GCM** to send all three object types to GCM in one operation:
+
+| Object type | GCM API | What is sent |
+|---|---|---|
+| **Certificates** | `POST /v1/…/crypto_objects/certificate_from_file` | Base64 DER certificate, alias, IT asset URI |
+| **SSH Host Keys** | `POST /v2/…/crypto_objects/keys` | Key algorithm, estimated key length, advertised algorithms (in extensions), IT asset relationship |
+| **TLS Protocols** | `POST /v2/…/crypto_objects/protocols` | TLS version, cipher suite, IT asset URI |
+
+After import, a results table shows **Imported** and **Failed** counts per object type, plus any per-target error messages.
+
+Alternatively, expand **Or upload a certificates CSV manually** to import only TLS certificates from a custom CSV file (useful when scanning was done offline with `convert_certs_into_csv.py`).
 
 **CSV formats:**
 
 | Step | Required columns | Optional columns |
 |------|-----------------|-----------------|
 | Targets (input to Step 2) | `Alias`, `URI` | — |
-| Certificates (output of Step 2 / input to Step 3) | `Alias`, `Certdata` | `URI (optional)` |
+| Certificates (output of Step 2 / input to Step 3 manual upload) | `Alias`, `Certdata` | `URI (optional)` |
 
 > **Tip:** Use [`disconnected-scanner/convert_certs_into_csv.py`](disconnected-scanner/convert_certs_into_csv.py) to convert local PEM/DER certificate files into the certificates CSV format instead of running a live scan.
 
@@ -365,7 +376,8 @@ SSH is detected automatically on standard port `22` and common alternatives `222
 | `DELETE` | `/api/v1/scanner/stop-scan/{scan_id}` | Signal a running stream scan to stop after the current target |
 | `POST` | `/api/v1/scanner/run-scan` | Non-streaming batch scan (kept for scripting / API compatibility) |
 | `POST` | `/api/v1/scanner/validate-csv` | Validate a certificates CSV before import |
-| `POST` | `/api/v1/scanner/import-csv` | Import certificates from CSV into GCM |
+| `POST` | `/api/v1/scanner/import-csv` | Import TLS certificates from CSV into GCM |
+| `POST` | `/api/v1/scanner/ingest-scan-results` | Ingest SSH host keys and TLS protocol metadata from scan results into GCM |
 
 ### Database Migrations
 

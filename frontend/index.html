@@ -596,38 +596,53 @@
                     </div>
                 </div>
 
-                <!-- Step 3: Import Certificates -->
+                <!-- Step 3: Import into GCM -->
                 <div id="scanner-step-3" class="scanner-step" style="display: none;">
                     <div class="scanner-section">
-                        <h3>Step 3: Import Certificates into GCM</h3>
-                        <p>Upload a CSV file containing certificate data to import into GCM. You can use the certificates CSV from Step 2, or upload any CSV file with the correct format.</p>
+                        <h3>Step 3: Import Scan Results into GCM</h3>
+                        <p>Import the scan results into GCM as crypto objects. If a scan was run in Step 2, all three object types can be ingested automatically.</p>
 
                         <div class="info-box" style="background: #e3f2fd; padding: 12px; border-radius: 4px; margin-bottom: 20px;">
-                            <strong>📋 CSV Format Required:</strong>
+                            <strong>📋 What gets imported:</strong>
                             <ul style="margin: 8px 0 0 20px;">
-                                <li><strong>Alias</strong> - Unique identifier for the certificate</li>
-                                <li><strong>Certdata</strong> - Base64-encoded certificate data</li>
-                                <li><strong>URI (optional)</strong> - URI where certificate is used (e.g., https://example.com:443)</li>
+                                <li><strong>Certificates</strong> – TLS certificates via <code>certificate_from_file</code> (requires CSV with Alias, Certdata, URI)</li>
+                                <li><strong>SSH Host Keys</strong> – Public host keys discovered on SSH ports, ingested as crypto key objects</li>
+                                <li><strong>TLS Protocols</strong> – TLS version and cipher suite per host, ingested as protocol objects</li>
                             </ul>
-                            <p style="margin: 8px 0 0 0;"><small>💡 Tip: Use <code>convert_certs_into_csv.py</code> to convert certificate files to CSV format</small></p>
                         </div>
 
-                        <div class="form-section">
-                            <div class="form-group">
-                                <label for="csv-file-input">CSV File *</label>
-                                <input type="file" id="csv-file-input" accept=".csv">
-                                <small>Select a certificates CSV (Alias, Certdata, URI). Leave empty to use the CSV from Step 2.</small>
+                        <!-- Auto-import from scan (shown when scan results are in memory) -->
+                        <div id="ingest-from-scan-panel" style="display: none; margin-bottom: 20px; padding: 12px; border: 1px solid #e5e7eb; border-radius: 6px; background: #f7f8fa;">
+                            <p style="margin: 0 0 10px 0; font-weight: 600;">Import from last scan</p>
+                            <div id="ingest-scan-summary" style="font-size: 13px; color: #57606a; margin-bottom: 12px;"></div>
+                            <div class="form-actions" style="margin: 0;">
+                                <button id="ingest-all-btn" class="btn btn-primary">📤 Import All to GCM</button>
                             </div>
+                        </div>
 
-                            <!-- Validation Results -->
-                            <div id="validation-results" class="result-section" style="display: none;">
-                                <!-- Validation results will be displayed here -->
-                            </div>
+                        <!-- Manual CSV upload (certificates only) -->
+                        <details style="margin-bottom: 20px;">
+                            <summary style="cursor: pointer; font-weight: 600; padding: 8px 0;">📁 Or upload a certificates CSV manually</summary>
+                            <div class="form-section" style="margin-top: 12px;">
+                                <div class="form-group">
+                                    <label for="csv-file-input">CSV File</label>
+                                    <input type="file" id="csv-file-input" accept=".csv">
+                                    <small>Select a certificates CSV (Alias, Certdata, URI). Leave empty to use the CSV from Step 2.</small>
+                                </div>
 
-                            <div class="form-actions">
-                                <button id="prev-step-btn" class="btn btn-secondary">← Back to Scan</button>
-                                <button id="import-csv-btn" class="btn btn-primary" disabled>📤 Import Certificates</button>
+                                <!-- Validation Results -->
+                                <div id="validation-results" class="result-section" style="display: none;">
+                                    <!-- Validation results will be displayed here -->
+                                </div>
+
+                                <div class="form-actions">
+                                    <button id="import-csv-btn" class="btn btn-secondary" disabled>📤 Import Certificates Only</button>
+                                </div>
                             </div>
+                        </details>
+
+                        <div class="form-actions" style="margin-top: 0;">
+                            <button id="prev-step-btn" class="btn btn-secondary">← Back to Scan</button>
                         </div>
 
                         <!-- Import Results -->

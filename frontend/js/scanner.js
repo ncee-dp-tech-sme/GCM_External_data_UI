@@ -12,6 +12,10 @@
  *                              WEAK_KEY, SELF_SIGNED, SHA1_SIGNATURE, WEAK_SSH_HOSTKEY)
  * Last Modified: 2026-07-25 - SSH column always renders when service=ssh (even without key type); algorithm
  *                              list shown cleanly; progress panel made more prominent
+ * Last Modified: 2026-07-25 - Fix #scan-results staying hidden after scan completes (display:block in finalizeScanResultsTable)
+ * Last Modified: 2026-07-25 - Fix Host:Port column showing "?" for default ports by passing host/port directly from SSE event
+ * Last Modified: 2026-07-25 - Add handleIngestAll() to import certs + SSH keys + TLS protocols; wire ingest-all-btn;
+ *                              populate ingest-from-scan panel on Step 3 with object counts
  */
 
 // Scanner state
@@ -94,10 +98,16 @@ function setupScannerEventListeners() {
         prevScanBtn.addEventListener('click', () => showScannerStep(1));
     }
 
-    // Step 3: Import CSV
+    // Step 3: Import CSV (certificates-only manual path)
     const importBtn = document.getElementById('import-csv-btn');
     if (importBtn) {
         importBtn.addEventListener('click', handleImportCSV);
+    }
+
+    // Step 3: Import All (keys + protocols + certs from scan)
+    const ingestAllBtn = document.getElementById('ingest-all-btn');
+    if (ingestAllBtn) {
+        ingestAllBtn.addEventListener('click', handleIngestAll);
     }
 
     // CSV file input (step 3) — validate on select
@@ -154,10 +164,23 @@ function showScannerStep(step) {
         }
     }
 
-    // When landing on step 3 with a scan CSV available, pre-enable import
-    if (step === 3 && scannerState.scannedCSV) {
+    // When landing on step 3, populate the ingest-from-scan panel
+    if (step === 3) {
+        const panel = document.getElementById('ingest-from-scan-panel');
+        const summary = document.getElementById('ingest-scan-summary');
         const importBtn = document.getElementById('import-csv-btn');
-        if (importBtn) importBtn.disabled = false;
+
+        const hasResults = scannerState.scanResults && scannerState.scanResults.length > 0;
+        if (panel) panel.style.display = hasResults ? 'block' : 'none';
+
+        if (hasResults && summary) {
+            const certs = scannerState.scanResults.filter(r => r.success && r.cert_b64).length;
+            const keys  = scannerState.scanResults.filter(r => r.service === 'ssh' && r.ssh_host_key_type && r.success).length;
+            const tls   = scannerState.scanResults.filter(r => r.service === 'tls' && r.tls_version && r.success).length;
+            summary.textContent = `${certs} certificate(s), ${keys} SSH host key(s), ${tls} TLS protocol(s) ready to import.`;
+        }
+
+        if (importBtn && scannerState.scannedCSV) importBtn.disabled = false;
     }
 }
 
@@ -299,11 +322,14 @@ async function handleRunScan() {
     const progressPanel = document.getElementById('scan-progress-panel');
     const scanResultsDiv = document.getElementById('scan-results');
 
-    // Reset UI
+    // Reset UI — clear previous scan results completely
     runBtn.disabled = true;
     stopBtn.style.display = 'inline-flex';
     progressPanel.style.display = 'block';
-    if (scanResultsDiv) scanResultsDiv.style.display = 'none';
+    if (scanResultsDiv) {
+        scanResultsDiv.style.display = 'none';
+        scanResultsDiv.innerHTML = '';  // remove old table and action bar
+    }
 
     document.getElementById('scan-progress-bar').style.width = '0%';
     document.getElementById('scan-progress-counter').textContent = '0 / ?';
@@ -357,7 +383,7 @@ async function handleRunScan() {
                     updateScanProgress(event.index, event.total, event.host, event.port);
                     if (event.result) {
                         scannerState.scanResults.push(event.result);
-                        updateLiveResultsTable(event.result);
+                        updateLiveResultsTable(event.result, event.host, event.port);
                     }
                 } else if (event.type === 'done') {
                     handleScanDone(event);
@@ -505,14 +531,22 @@ function ensureLiveScanTable() {
 
 /**
  * Append a single result row to the live table.
+ * host/port are passed directly from the SSE event to avoid URL.port returning ""
+ * for default ports (e.g. 443 on https://).
  */
-function updateLiveResultsTable(r) {
+function updateLiveResultsTable(r, host, port) {
     ensureLiveScanTable();
     const tbody = document.getElementById('scan-live-tbody');
     if (!tbody) return;
 
-    const parsed = tryParseUri(r.uri);
-    const hostPort = parsed ? `${parsed.hostname}:${parsed.port || '?'}` : escapeHtml(r.uri);
+    // Prefer explicit host/port from SSE event; fall back to parsing the URI
+    let hostPort;
+    if (host && port) {
+        hostPort = `${escapeHtml(host)}:${port}`;
+    } else {
+        const parsed = tryParseUri(r.uri);
+        hostPort = parsed ? `${parsed.hostname}:${parsed.port || '?'}` : escapeHtml(r.uri);
+    }
 
     let subjectInfo = '—';
     if (r.service === 'tls' && r.cert_subject) {
@@ -573,6 +607,7 @@ function updateLiveResultsTable(r) {
 function finalizeScanResultsTable(event) {
     const div = document.getElementById('scan-results');
     if (!div) return;
+    div.style.display = 'block';
 
     // Remove old action bar if present
     const old = document.getElementById('scan-actions-bar');
@@ -743,7 +778,119 @@ async function handleImportCSV() {
 }
 
 /**
- * Display import results (Step 3)
+ * Import all scan results to GCM: certificates (CSV) + SSH keys + TLS protocols.
+ */
+async function handleIngestAll() {
+    if (!scannerState.scanResults || scannerState.scanResults.length === 0) {
+        showNotification('No scan results in memory. Please run a scan first.', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('ingest-all-btn');
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Importing…';
+
+    try {
+        // 1. Import TLS certificates via existing CSV endpoint
+        let certResult = { imported_count: 0, failed_count: 0, total_rows: 0, errors: [] };
+        if (scannerState.scannedCSV) {
+            const blob = new Blob([scannerState.scannedCSV], { type: 'text/csv' });
+            const formData = new FormData();
+            formData.append('file', new File([blob], scannerState.scannedFilename || 'certificates.csv', { type: 'text/csv' }));
+
+            const certResp = await fetch(`${api.baseURL}/scanner/import-csv`, {
+                method: 'POST',
+                body: formData,
+            });
+            if (certResp.ok) {
+                certResult = await certResp.json();
+            } else {
+                const err = await certResp.json();
+                certResult.errors = [err.detail || 'Certificate import failed'];
+            }
+        }
+
+        // 2. Ingest SSH keys + TLS protocols from scan results
+        const ingestResp = await fetch(`${api.baseURL}/scanner/ingest-scan-results`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ results: scannerState.scanResults }),
+        });
+
+        let ingestResult = { keys_imported: 0, keys_failed: 0, protocols_imported: 0, protocols_failed: 0, errors: [] };
+        if (ingestResp.ok) {
+            ingestResult = await ingestResp.json();
+        } else {
+            const err = await ingestResp.json();
+            // err.detail may be a string (HTTPException) or an array (Pydantic 422)
+            const detail = Array.isArray(err.detail)
+                ? err.detail.map(e => `${e.loc?.join('.')}: ${e.msg}`).join('; ')
+                : (err.detail || 'Key/protocol ingest failed');
+            ingestResult.errors = [detail];
+        }
+
+        displayIngestAllResults(certResult, ingestResult);
+
+        const totalImported = certResult.imported_count + ingestResult.keys_imported + ingestResult.protocols_imported;
+        const totalFailed   = certResult.failed_count  + ingestResult.keys_failed  + ingestResult.protocols_failed;
+        showNotification(
+            `Imported ${totalImported} object(s) to GCM` + (totalFailed > 0 ? ` (${totalFailed} failed)` : ''),
+            totalFailed > 0 ? 'warning' : 'success'
+        );
+
+    } catch (error) {
+        console.error('Ingest all failed:', error);
+        showNotification(error.message || 'Import failed', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+}
+
+/**
+ * Display combined ingest-all results (Step 3)
+ */
+function displayIngestAllResults(certResult, ingestResult) {
+    const resultsDiv = document.getElementById('import-results');
+    if (!resultsDiv) return;
+
+    const row = (label, ok, fail) =>
+        `<tr>
+            <td style="padding:4px 10px;">${label}</td>
+            <td style="padding:4px 10px; color:#16a34a; font-weight:600;">${ok}</td>
+            <td style="padding:4px 10px; color:${fail > 0 ? '#dc2626' : '#6b7280'};">${fail}</td>
+        </tr>`;
+
+    let html = `
+        <table style="width:100%; border-collapse:collapse; font-size:13px; margin-bottom:12px;">
+            <thead>
+                <tr style="background:#f7f8fa; border-bottom:2px solid #e5e7eb;">
+                    <th style="text-align:left; padding:6px 10px;">Object type</th>
+                    <th style="text-align:left; padding:6px 10px;">Imported</th>
+                    <th style="text-align:left; padding:6px 10px;">Failed</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${row('Certificates', certResult.imported_count, certResult.failed_count)}
+                ${row('SSH Host Keys', ingestResult.keys_imported, ingestResult.keys_failed)}
+                ${row('TLS Protocols', ingestResult.protocols_imported, ingestResult.protocols_failed)}
+            </tbody>
+        </table>`;
+
+    const allErrors = [...(certResult.errors || []), ...(ingestResult.errors || [])];
+    if (allErrors.length > 0) {
+        html += '<div style="margin-top:8px;"><strong>Errors:</strong><ul style="margin:4px 0 0 16px; font-size:12px;">';
+        allErrors.forEach(e => { html += `<li>${escapeHtml(e)}</li>`; });
+        html += '</ul></div>';
+    }
+
+    resultsDiv.innerHTML = html;
+    resultsDiv.style.display = 'block';
+}
+
+/**
+ * Display import results for the certificates-only CSV path (Step 3)
  */
 function displayImportResults(results) {
     const resultsDiv = document.getElementById('import-results');

@@ -7,6 +7,7 @@ Last Modified: 2026-06-02
 Last Modified: 2026-07-25 - Added ScanRequest / ScanResponse schemas for the run-scan endpoint
 Last Modified: 2026-07-25 - Added StreamScanRequest, enriched ScanResult with service/protocol/SSH fields, ScanJobStatus
 Last Modified: 2026-07-25 - Added findings field to ScanResult for crypto-weakness reporting
+Last Modified: 2026-07-25 - Added IngestScanResultsRequest/Response for SSH key + TLS protocol ingest
 """
 
 from typing import Optional, List, Dict, Any
@@ -151,6 +152,20 @@ class ScanJobStatus(BaseModel):
     """Tracks whether a running scan should be stopped."""
 
     stopped: bool = False
+
+
+class IngestScanResultsRequest(BaseModel):
+    """Request body for /ingest-scan-results — full scan result list from the SSE scan."""
+    results: List[ScanResult] = Field(..., description="Scan results from the streaming scan")
+
+
+class IngestScanResultsResponse(BaseModel):
+    """Response from /ingest-scan-results."""
+    keys_imported: int = 0
+    keys_failed: int = 0
+    protocols_imported: int = 0
+    protocols_failed: int = 0
+    errors: List[str] = []
 
 
 class ScannerStats(BaseModel):

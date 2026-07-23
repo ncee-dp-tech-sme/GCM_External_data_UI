@@ -7,6 +7,7 @@ Last Modified: 2026-06-02
 Last Modified: 2026-07-25 - Added /run-scan endpoint that fetches SSL certificates from a target list.
 Last Modified: 2026-07-25 - Added /run-scan-stream SSE endpoint with real-time progress and stop support.
                            - Added /stop-scan/{scan_id} endpoint to cancel a running stream scan.
+Last Modified: 2026-07-25 - Added /ingest-scan-results endpoint for SSH key and TLS protocol ingest.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
@@ -29,6 +30,8 @@ from app.schemas.scanner import (
     ScanResponse,
     ScanResult,
     StreamScanRequest,
+    IngestScanResultsRequest,
+    IngestScanResultsResponse,
 )
 from app.services.scanner_service import ScannerService
 from app.services.auth_service import AuthService
@@ -344,6 +347,57 @@ async def run_scan_stream(request: StreamScanRequest):
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+@router.post("/ingest-scan-results", response_model=IngestScanResultsResponse)
+async def ingest_scan_results(
+    request: IngestScanResultsRequest,
+    db: Session = Depends(get_db)
+) -> IngestScanResultsResponse:
+    """
+    Ingest SSH host keys and TLS protocol metadata from a completed scan into GCM.
+
+    Accepts the raw results list produced by the streaming scan endpoint.
+    Calls:
+      - /v2/assets/ingest/crypto_objects/keys     (SSH host keys)
+      - /v2/assets/ingest/crypto_objects/protocols (TLS version + ciphers)
+    """
+    profile = ProfileService.get_active_profile(db)
+    if not profile:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No active profile configured. Please configure a profile first."
+        )
+
+    auth_headers = AuthService.get_active_profile_headers(db)
+
+    profile_data = {
+        "app_uri": profile.app_uri,
+        "oidc_uri": profile.oidc_uri,
+        "realm": profile.realm,
+        "tenant_id": profile.tenant_id,
+        "insecure": profile.insecure,
+        "timeout": profile.timeout,
+    }
+
+    results = [r.dict() for r in request.results]
+
+    keys_imported, keys_failed, keys_errors = ScannerService.ingest_keys_from_results(
+        results, profile_data, auth_headers
+    )
+    protocols_imported, protocols_failed, protocols_errors = ScannerService.ingest_protocols_from_results(
+        results, profile_data, auth_headers
+    )
+
+    all_errors = keys_errors + protocols_errors
+
+    return IngestScanResultsResponse(
+        keys_imported=keys_imported,
+        keys_failed=keys_failed,
+        protocols_imported=protocols_imported,
+        protocols_failed=protocols_failed,
+        errors=all_errors,
     )
 
 
