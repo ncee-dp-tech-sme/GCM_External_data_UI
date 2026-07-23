@@ -359,7 +359,7 @@ When a scan was run in Step 2, a summary shows the number of each object type re
 | **SSH Host Keys** | `POST /v2/…/crypto_objects/keys` | Key algorithm, estimated key length, IT asset URI, `relationship_type: HOSTED_ON`, relationships block |
 | **TLS Protocols** | `POST /v2/…/crypto_objects/protocols` | TLS version, cipher suite, IT asset URI, `relationship_type: HOSTED_ON` |
 
-Before each crypto-object POST, the importer automatically upserts a minimal IT asset record for the target URI (`POST /v2/…/ingest/it_assets`) so that GCM can resolve the `it_asset_uri` reference. The key and protocol payloads also carry an explicit `relationships` block so GCM can link the crypto object to the IT asset without a separate lookup — preventing `"Unique Identifier not found"` skips.
+Before each crypto-object POST, the importer automatically upserts a minimal IT asset record for the target URI (`POST /v2/…/ingest/it_assets`) so that GCM can resolve the `it_asset_uri` reference. Assets are always stored with `https://` URIs regardless of port — GCM does not support `ssh://` URI schemes. The SSH protocol is conveyed via the `protocol: "SSH"` field in the asset body. Key and protocol payloads carry an explicit `relationships` block (`relationship_type: HOSTED_ON`) so GCM can link the crypto object to the IT asset, preventing `"Unique Identifier not found"` skips.
 
 After import, a results table shows **Imported** and **Failed** counts per object type. Expand the **GCM responses** collapsible section to see the raw GCM response body for every per-object API call — useful for diagnosing any remaining issues.
 
@@ -536,12 +536,12 @@ uvicorn app.main:app --reload  # Will recreate database
 {"message":"No Data to Ingest","it_assets":{},"crypto_object_keys":{"skipped":[{"index":1,"message":"Unique Identifier not found"}]}}
 ```
 
-**Cause (fixed in v1.3.3)**: GCM's `/v2/…/crypto_objects/keys` API requires an explicit `relationships` block and `relationship_type: HOSTED_ON` in the key payload to link the key to its IT asset. Earlier versions sent only a flat `it_asset_uri` field, which GCM could not resolve. The importer now includes the full relationships block alongside `it_asset_uri`.
+**Cause (fixed in v1.3.4)**: The importer was rewriting SSH target URIs from `https://host:22` to `ssh://host:22` before storing the IT asset in GCM. GCM silently discards IT asset records with `ssh://` URIs (returns HTTP 200 with `it_assets:{}`), so the subsequent key ingest could not find the asset and skipped every record. The fix keeps `https://` URIs throughout — GCM stores and resolves all server assets under `https://`, with the SSH protocol indicated by the `protocol: "SSH"` field in the asset body.
 
 **If it still happens**:
-1. Expand the **GCM responses** collapsible section — look for `[asset]:` prefixed lines that indicate the IT asset upsert itself failed.
+1. Expand the **GCM responses** collapsible section — look for `[asset]:` prefixed lines that indicate the IT asset pre-creation failed.
 2. Check that the GCM profile has permission to write IT assets (`POST /v2/assets/ingest/it_assets`).
-3. Verify the URI format includes the correct scheme: SSH ports (22, 2222, 22222) must use `ssh://`, all others `https://`. The scanner generates correct URIs automatically — check any manually-created targets CSV.
+3. Verify the targets CSV uses `https://host:port` URIs — `ssh://` URIs are not supported by GCM's asset inventory.
 
 ### Scanner: "Import All to GCM" Button Missing on Step 2
 

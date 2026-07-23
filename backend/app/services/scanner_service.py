@@ -40,14 +40,14 @@ Last Modified: 2026-07-28 00:03 UTC - Add _ensure_it_asset() that upserts a mini
 Last Modified: 2026-07-28 00:04 UTC - Fix _ensure_it_asset() protocol field: SSH ports (22, 2222, 22222)
                                         now get protocol="SSH" regardless of URI scheme (was "HTTPS");
                                         pass service_hint from SSH/TLS callers for correct GCM protocol.
-Last Modified: 2026-07-28 00:05 UTC - Add _canonical_uri(): rewrites https://host:22 → ssh://host:22 for
-                                         SSH ports so GCM stores/looks-up the asset by a URI scheme that
-                                         matches the crypto-object ingest lookup ("Unique Identifier not found"
-                                         was caused by scheme mismatch between asset upsert and key ingest).
-                                         generate_target_list also emits ssh:// URIs for known SSH ports.
 Last Modified: 2026-07-29 00:00 UTC - Add relationship_type="HOSTED_ON" and relationships block to SSH key
                                          ingest body; mirrors the structure accepted by GCM crypto_objects
                                          keys API to fix persistent "Unique Identifier not found" skips.
+Last Modified: 2026-07-29 00:01 UTC - Add 'ip' field to _ensure_it_asset() payload; surface silent GCM
+                                         rejections (it_assets:{}) as errors instead of silent success.
+Last Modified: 2026-07-29 00:02 UTC - Revert _canonical_uri() ssh:// rewrite: GCM rejects ssh:// URIs
+                                         silently; keep https:// throughout (protocol="SSH" in asset body
+                                         is sufficient). Also skip key ingest when asset upsert fails.
 """
 
 import sys
@@ -270,11 +270,7 @@ class ScannerService:
         rows = []
         for target in targets:
             for port in port_list:
-                # Use the correct scheme so downstream probes and GCM lookups are consistent
-                if port in (22, 2222, 22222):
-                    uri = f"ssh://{target}:{port}"
-                else:
-                    uri = f"https://{target}:{port}"
+                uri = f"https://{target}:{port}"
                 alias = f"{alias_prefix}{target}_{port}"
                 rows.append([alias, uri])
 
@@ -473,17 +469,11 @@ class ScannerService:
     @staticmethod
     def _canonical_uri(uri: str) -> str:
         """
-        Rewrite the URI scheme to match the actual service on the port so GCM
-        stores and looks up assets with a consistent identifier.
-          https://host:22   → ssh://host:22
-          https://host:2222 → ssh://host:2222
-        All other URIs are returned unchanged.
+        Normalise the URI for GCM asset storage.  GCM only understands https://
+        URIs for server assets — ssh:// URIs cause silent ingest rejections.
+        Returns the URI unchanged (no scheme rewrite needed; protocol is conveyed
+        via the 'protocol' field in the asset body, not the URI scheme).
         """
-        parsed = urlparse(uri)
-        port = parsed.port
-        if port in ScannerService._SSH_PORTS and parsed.scheme != "ssh":
-            # Reconstruct with ssh:// scheme
-            return f"ssh://{parsed.hostname}:{port}"
         return uri
 
     @staticmethod
@@ -504,9 +494,6 @@ class ScannerService:
         22 or 2222 are not recorded as "HTTPS" in GCM.
         Returns an error string on failure, or None on success.
         """
-        # Normalise the URI scheme before sending to GCM so the asset is stored
-        # with a consistent identifier that the crypto-object ingest can look up.
-        uri = ScannerService._canonical_uri(uri)
         parsed = urlparse(uri)
         hostname = parsed.hostname or uri
         port     = parsed.port or (22 if parsed.scheme in ("ssh", "") else 443)
@@ -519,8 +506,11 @@ class ScannerService:
         else:
             protocol = parsed.scheme.upper() if parsed.scheme else "HTTPS"
 
+        # GCM requires an 'ip' field for server assets — use hostname which for
+        # Shodan/scanner targets is always an IP address.
         asset_body: Dict[str, Any] = {
             "uri":        uri,
+            "ip":         hostname,
             "hostname":   hostname,
             "port":       port,
             "asset_type": "SERVER",
@@ -533,6 +523,14 @@ class ScannerService:
             resp = ScannerService._gcm_post(client, auth_headers, ingest_path, payload)
             if not resp.ok:
                 return f"IT asset upsert failed ({resp.status_code}): {resp.text[:120]}"
+            # Surface silent rejections: GCM returns 200 but empty it_assets when the
+            # record was discarded (e.g. validation failure).
+            try:
+                resp_json = resp.json()
+                if isinstance(resp_json.get("it_assets"), dict) and not resp_json["it_assets"]:
+                    return f"IT asset upsert silently rejected by GCM: {resp.text[:200]}"
+            except Exception:
+                pass
         except Exception as e:
             return f"IT asset upsert error: {str(e)}"
         return None
@@ -570,18 +568,19 @@ class ScannerService:
 
             for r in ssh_results:
                 alias    = r.get("alias", "")
-                # Rewrite URI to canonical scheme (https://host:22 → ssh://host:22) so the
-                # it_asset_uri in the key body matches the URI GCM stored during asset upsert.
-                uri      = ScannerService._canonical_uri(r.get("uri", ""))
+                uri      = r.get("uri", "")
                 key_type = r.get("ssh_host_key_type", "")   # e.g. "rsa-sha2-512", "ssh-rsa", "ecdsa-sha2-nistp256"
                 alg_list = r.get("ssh_host_key_fingerprint", "")  # comma-sep algorithm string
 
-                # Ensure the IT asset exists in GCM before posting the key object
+                # Ensure the IT asset exists in GCM before posting the key object.
+                # Skip the key ingest for this host if the asset upsert fails.
                 if uri and uri not in _ensured_uris:
                     asset_err = ScannerService._ensure_it_asset(client, auth_headers, uri, service_hint="ssh")
+                    _ensured_uris.add(uri)
                     if asset_err:
                         errors.append(f"{alias} [asset]: {asset_err}")
-                    _ensured_uris.add(uri)
+                        failed_count += 1
+                        continue
 
                 # Normalise SSH wire-format key type → clean algorithm name for GCM
                 if "ed25519" in key_type:
