@@ -22,9 +22,15 @@ Last Modified: 2026-07-25 00:01 UTC - Added SSH alternative ports 2222/22222 to 
 Last Modified: 2026-07-25 00:02 UTC - Added ingest_keys_from_results() for SSH host keys to GCM /v2/keys
                                        and ingest_protocols_from_results() for TLS to GCM /v2/protocols.
 Last Modified: 2026-07-25 00:03 UTC - Add port 2222/22222 to _PORT_SERVICE_HINTS so probe_target takes the
-                                       direct SSH path; normalise SSH wire key type to clean GCM algorithm
-                                       name (RSA/ECDSA/Ed25519); drop enum fields (key_type, key_usage,
-                                       origin_source) that GCM may reject as unknown values.
+                                        direct SSH path; normalise SSH wire key type to clean GCM algorithm
+                                        name (RSA/ECDSA/Ed25519); drop enum fields (key_type, key_usage,
+                                        origin_source) that GCM may reject as unknown values.
+Last Modified: 2026-07-28 00:00 UTC - Remove 'results' from done SSE event (large cert_b64 payloads caused
+                                        silent JSON parse failure in browser, preventing action bar from
+                                        appearing after scan). JS reads results from scannerState instead.
+Last Modified: 2026-07-28 00:01 UTC - Fix SSH key ingest payload: replace nested relationships block with
+                                        flat it_asset_uri field to match the structure accepted by GCM v2
+                                        keys API (mirrors the working protocol ingest structure).
 """
 
 import sys
@@ -495,18 +501,8 @@ class ScannerService:
                 key_obj: Dict[str, Any] = {
                     "crypto_object_name": alias,
                     "key_algorithm": gcm_algorithm,
+                    "it_asset_uri": uri,
                     "discovery_sources": ["GCM-Scanner"],
-                    "relationships": [
-                        {
-                            "asset_identifiers": {"uri": uri},
-                            "asset_type": "IT_ASSET",
-                            "relationship_type": "HOSTED_ON",
-                        }
-                    ],
-                    "extensions": {
-                        "ssh_host_key_type": key_type,
-                        "ssh_advertised_algorithms": alg_list,
-                    },
                 }
                 # Only include numeric fields when they have a meaningful value
                 if key_length:
@@ -1150,6 +1146,9 @@ class ScannerService:
         filename = f"certificates_{timestamp}.csv"
 
         stopped = bool(stop_flag and stop_flag.get("stopped"))
+        # Do NOT include 'results' here — the JS already has them in scannerState.scanResults
+        # (accumulated from every 'progress' event).  Including cert_b64 in the done event
+        # makes the JSON frame potentially many MB, causing silent parse failures in the browser.
         yield {
             "type": "done",
             "total": total_targets,
@@ -1158,7 +1157,6 @@ class ScannerService:
             "stopped": stopped,
             "certificates_csv": certificates_csv,
             "filename": filename,
-            "results": results,
         }
 
 
