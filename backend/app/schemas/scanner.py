@@ -5,9 +5,11 @@ Simplified implementation for target generation and CSV import.
 Created: 2026-06-02
 Last Modified: 2026-06-02
 Last Modified: 2026-07-25 - Added ScanRequest / ScanResponse schemas for the run-scan endpoint
+Last Modified: 2026-07-25 - Added StreamScanRequest, enriched ScanResult with service/protocol/SSH fields, ScanJobStatus
+Last Modified: 2026-07-25 - Added findings field to ScanResult for crypto-weakness reporting
 """
 
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, validator
 
 
@@ -98,12 +100,27 @@ class ScanRequest(BaseModel):
 
 
 class ScanResult(BaseModel):
-    """Result for a single scanned target."""
+    """Result for a single scanned target — enriched with service/protocol details."""
 
     alias: str
     uri: str
     success: bool
+    # SSL/TLS fields
     cert_b64: Optional[str] = None
+    tls_version: Optional[str] = None
+    cipher_suite: Optional[str] = None
+    cert_subject: Optional[str] = None
+    cert_issuer: Optional[str] = None
+    cert_not_after: Optional[str] = None
+    # Service detection
+    service: Optional[str] = None        # e.g. "tls", "ssh", "ftp", "smtp", "http", "unknown"
+    service_banner: Optional[str] = None
+    # SSH host key fields
+    ssh_host_key_type: Optional[str] = None
+    ssh_host_key_fingerprint: Optional[str] = None
+    # Crypto-weakness findings
+    findings: List[str] = []
+    # Generic error
     error: Optional[str] = None
 
 
@@ -119,6 +136,21 @@ class ScanResponse(BaseModel):
     )
     filename: str
     results: List[ScanResult] = []
+
+
+class StreamScanRequest(BaseModel):
+    """Request for the SSE streaming scan endpoint."""
+
+    targets_csv: str = Field(..., description="CSV content (Alias, URI)")
+    timeout: Optional[float] = Field(5.0, description="Per-target socket timeout in seconds")
+    insecure: Optional[bool] = Field(False, description="Allow self-signed certificates")
+    scan_id: str = Field(..., description="Client-generated UUID used to cancel the scan")
+
+
+class ScanJobStatus(BaseModel):
+    """Tracks whether a running scan should be stopped."""
+
+    stopped: bool = False
 
 
 class ScannerStats(BaseModel):

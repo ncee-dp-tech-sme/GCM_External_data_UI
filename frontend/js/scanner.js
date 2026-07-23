@@ -5,6 +5,13 @@
  * Created: 2026-06-02
  * Last Modified: 2026-06-02 - Initial implementation
  * Last Modified: 2026-07-25 - Added Step 2 scan functionality (run-scan endpoint)
+ * Last Modified: 2026-07-25 - Show generated-targets banner on Step 2; file upload is now optional override
+ * Last Modified: 2026-07-25 - SSE streaming scan with real-time progress bar, stop button, and enriched
+ *                              results table (service type, TLS version, cipher, SSH host-key info)
+ * Last Modified: 2026-07-25 - Added findings badges in results table (EXPIRED, LEGACY_TLS, WEAK_CIPHER,
+ *                              WEAK_KEY, SELF_SIGNED, SHA1_SIGNATURE, WEAK_SSH_HOSTKEY)
+ * Last Modified: 2026-07-25 - SSH column always renders when service=ssh (even without key type); algorithm
+ *                              list shown cleanly; progress panel made more prominent
  */
 
 // Scanner state
@@ -15,6 +22,28 @@ const scannerState = {
     targetCount: 0,
     scannedCSV: null,
     scannedFilename: null,
+    // SSE / streaming scan state
+    activeScanId: null,
+    scanResults: [],
+};
+
+// Service label → badge colour
+const SERVICE_COLORS = {
+    tls:         '#3b82d4',
+    ssh:         '#7c5cd8',
+    ftp:         '#f59e0b',
+    smtp:        '#f59e0b',
+    smtps:       '#f59e0b',
+    pop3:        '#f59e0b',
+    imap:        '#f59e0b',
+    http:        '#6b7280',
+    'http-alt':  '#6b7280',
+    mysql:       '#e8720c',
+    postgresql:  '#336791',
+    redis:       '#dc382d',
+    mongodb:     '#4caf50',
+    amqp:        '#ff6600',
+    unknown:     '#9ca3af',
 };
 
 /**
@@ -52,6 +81,12 @@ function setupScannerEventListeners() {
     const runScanBtn = document.getElementById('run-scan-btn');
     if (runScanBtn) {
         runScanBtn.addEventListener('click', handleRunScan);
+    }
+
+    // Stop scan
+    const stopScanBtn = document.getElementById('stop-scan-btn');
+    if (stopScanBtn) {
+        stopScanBtn.addEventListener('click', handleStopScan);
     }
 
     const prevScanBtn = document.getElementById('prev-scan-btn');
@@ -104,6 +139,20 @@ function showScannerStep(step) {
             el.classList.remove('active', 'completed');
         }
     });
+
+    // When landing on step 2, show/hide the generated-targets banner
+    if (step === 2) {
+        const banner = document.getElementById('generated-targets-banner');
+        if (banner) {
+            if (scannerState.generatedCSV) {
+                document.getElementById('banner-target-count').textContent = scannerState.targetCount;
+                document.getElementById('banner-filename').textContent = scannerState.generatedFilename || 'scan_targets.csv';
+                banner.style.display = 'block';
+            } else {
+                banner.style.display = 'none';
+            }
+        }
+    }
 
     // When landing on step 3 with a scan CSV available, pre-enable import
     if (step === 3 && scannerState.scannedCSV) {
@@ -194,15 +243,39 @@ function downloadGeneratedCSV() {
     showNotification('CSV downloaded successfully', 'success');
 }
 
+// -----------------------------------------------------------------------
+// Streaming scan (Step 2) — SSE-based with progress bar + stop button
+// -----------------------------------------------------------------------
+
 /**
- * Handle the SSL certificate scan (Step 2)
- * Uses either an uploaded targets file or the CSV generated in Step 1.
+ * Generate a simple UUID for the scan job.
+ */
+function generateScanId() {
+    return 'scan-' + Date.now() + '-' + Math.random().toString(36).slice(2, 9);
+}
+
+/**
+ * Update the progress bar and label.
+ */
+function updateScanProgress(index, total, host, port) {
+    const pct = total > 0 ? Math.round((index / total) * 100) : 0;
+    document.getElementById('scan-progress-bar').style.width = `${pct}%`;
+    document.getElementById('scan-progress-counter').textContent = `${index} / ${total}`;
+    document.getElementById('scan-progress-label').textContent =
+        index < total ? `Scanning…` : `Finalising…`;
+    if (host) {
+        document.getElementById('scan-current-target').textContent =
+            `▶ ${host}:${port}`;
+    }
+}
+
+/**
+ * Handle the SSL certificate scan (Step 2) — streaming via SSE.
  */
 async function handleRunScan() {
     const fileInput = document.getElementById('scan-targets-file');
     const file = fileInput ? fileInput.files[0] : null;
 
-    // Resolve which CSV to scan
     let targetsCsv = null;
     if (file) {
         try {
@@ -221,90 +294,311 @@ async function handleRunScan() {
     const timeout = parseFloat(document.getElementById('scan-timeout').value) || 5.0;
     const insecure = document.getElementById('scan-insecure').checked;
 
-    const runBtn = document.getElementById('run-scan-btn');
-    const originalText = runBtn.textContent;
-    runBtn.disabled = true;
-    runBtn.textContent = 'Scanning…';
-
-    // Clear previous scan results
+    const runBtn    = document.getElementById('run-scan-btn');
+    const stopBtn   = document.getElementById('stop-scan-btn');
+    const progressPanel = document.getElementById('scan-progress-panel');
     const scanResultsDiv = document.getElementById('scan-results');
+
+    // Reset UI
+    runBtn.disabled = true;
+    stopBtn.style.display = 'inline-flex';
+    progressPanel.style.display = 'block';
     if (scanResultsDiv) scanResultsDiv.style.display = 'none';
 
+    document.getElementById('scan-progress-bar').style.width = '0%';
+    document.getElementById('scan-progress-counter').textContent = '0 / ?';
+    document.getElementById('scan-progress-label').textContent = 'Connecting…';
+    document.getElementById('scan-current-target').textContent = '';
+
+    const scanId = generateScanId();
+    scannerState.activeScanId = scanId;
+    scannerState.scanResults = [];
+
     try {
-        const response = await api.request('/scanner/run-scan', {
+        const response = await fetch(`${api.baseURL}/scanner/run-scan-stream`, {
             method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 targets_csv: targetsCsv,
                 timeout: timeout,
                 insecure: insecure,
-            })
+                scan_id: scanId,
+            }),
         });
 
-        // Persist certificates CSV for Step 3
-        scannerState.scannedCSV = response.certificates_csv;
-        scannerState.scannedFilename = response.filename;
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || 'Scan failed');
+        }
 
-        displayScanResults(response);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
 
-        const label = `${response.scanned} of ${response.total_targets} targets yielded certificates`;
-        showNotification(
-            label,
-            response.failed > 0 ? 'warning' : 'success'
-        );
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop(); // keep incomplete line
+
+            for (const line of lines) {
+                if (!line.startsWith('data:')) continue;
+                const raw = line.slice(5).trim();
+                if (!raw) continue;
+
+                let event;
+                try { event = JSON.parse(raw); } catch { continue; }
+
+                if (event.type === 'scanning') {
+                    updateScanProgress(event.index, event.total, event.host, event.port);
+                } else if (event.type === 'progress') {
+                    updateScanProgress(event.index, event.total, event.host, event.port);
+                    if (event.result) {
+                        scannerState.scanResults.push(event.result);
+                        updateLiveResultsTable(event.result);
+                    }
+                } else if (event.type === 'done') {
+                    handleScanDone(event);
+                    break;
+                }
+            }
+        }
 
     } catch (error) {
         console.error('Scan failed:', error);
         showNotification(error.message || 'Scan failed', 'error');
     } finally {
+        scannerState.activeScanId = null;
         runBtn.disabled = false;
-        runBtn.textContent = originalText;
+        stopBtn.style.display = 'none';
     }
 }
 
 /**
- * Display scan results table and navigation to Step 3
+ * Signal the backend to stop the current scan.
  */
-function displayScanResults(result) {
+async function handleStopScan() {
+    const scanId = scannerState.activeScanId;
+    if (!scanId) return;
+
+    try {
+        await fetch(`${api.baseURL}/scanner/stop-scan/${scanId}`, { method: 'DELETE' });
+        showNotification('Stop signal sent — finishing current target…', 'warning');
+    } catch (e) {
+        console.error('Failed to send stop signal:', e);
+    }
+}
+
+/**
+ * Called when the SSE stream emits a "done" event.
+ */
+function handleScanDone(event) {
+    const progressPanel = document.getElementById('scan-progress-panel');
+
+    // Finalize the progress bar
+    document.getElementById('scan-progress-bar').style.width = '100%';
+    document.getElementById('scan-progress-counter').textContent =
+        `${event.scanned + event.failed} / ${event.total}`;
+    document.getElementById('scan-progress-label').textContent =
+        event.stopped ? 'Scan stopped.' : 'Scan complete.';
+    document.getElementById('scan-current-target').textContent = '';
+
+    // Persist scan CSV for Step 3
+    scannerState.scannedCSV = event.certificates_csv;
+    scannerState.scannedFilename = event.filename;
+
+    const label = event.stopped
+        ? `Scan stopped — ${event.scanned} certificates found (${event.failed} failed)`
+        : `${event.scanned} of ${event.total} targets yielded certificates`;
+
+    showNotification(label, event.failed > 0 ? 'warning' : 'success');
+
+    // Finalize results table (add actions header)
+    finalizeScanResultsTable(event);
+}
+
+// -----------------------------------------------------------------------
+// Live results table helpers
+// -----------------------------------------------------------------------
+
+/**
+ * Return a coloured service badge HTML string.
+ */
+function serviceBadge(service) {
+    if (!service) return '<span style="color:#9ca3af; font-size:11px;">—</span>';
+    const color = SERVICE_COLORS[service] || SERVICE_COLORS.unknown;
+    return `<span style="display:inline-block; padding:2px 7px; border-radius:10px;
+        background:${color}22; color:${color}; border:1px solid ${color}55;
+        font-size:11px; font-weight:600; text-transform:uppercase;">${escapeHtml(service)}</span>`;
+}
+
+// Finding → display label + severity colour
+const FINDING_META = {
+    'EXPIRED':              { label: 'EXPIRED',         color: '#dc2626' },
+    'EXPIRING_SOON':        { label: 'EXPIRING SOON',   color: '#f59e0b' },
+    'SELF_SIGNED':          { label: 'SELF-SIGNED',     color: '#f59e0b' },
+    'SHA1_SIGNATURE':       { label: 'SHA-1 CERT',      color: '#dc2626' },
+    'LEGACY_TLS':           { label: 'LEGACY TLS',      color: '#dc2626' },
+    'WEAK_CIPHER':          { label: 'WEAK CIPHER',     color: '#dc2626' },
+    'WEAK_KEY':             { label: 'WEAK KEY',        color: '#dc2626' },
+    'WEAK_SSH_HOSTKEY':     { label: 'WEAK SSH KEY',    color: '#dc2626' },
+    'LEGACY_SSH_KEX':       { label: 'LEGACY SSH KEX',  color: '#f59e0b' },
+};
+
+/**
+ * Render an array of finding strings as coloured badge HTML.
+ */
+function findingsBadges(findings) {
+    if (!findings || findings.length === 0) {
+        return '<span style="color:#16a34a; font-size:11px;">✓ Clean</span>';
+    }
+    return findings.map(f => {
+        // Match prefix before ':' to look up meta
+        const key = Object.keys(FINDING_META).find(k => f.startsWith(k)) || '';
+        const meta = FINDING_META[key] || { label: f.split(':')[0], color: '#7c5cd8' };
+        const detail = f.includes(':') ? f.split(':').slice(1).join(':') : '';
+        const title = detail ? escapeHtml(detail) : '';
+        const displayLabel = meta.label + (detail ? '' : '');
+        return `<span title="${title}" style="display:inline-block; margin:1px 2px; padding:2px 6px;
+            border-radius:10px; background:${meta.color}18; color:${meta.color};
+            border:1px solid ${meta.color}44; font-size:10px; font-weight:700;
+            white-space:nowrap; cursor:default;">${escapeHtml(displayLabel)}</span>`;
+    }).join('');
+}
+
+/**
+ * Create or get the scan live-results table container inside #scan-results.
+ */
+function ensureLiveScanTable() {
+    const div = document.getElementById('scan-results');
+    if (!div) return null;
+    div.style.display = 'block';
+
+    let table = document.getElementById('scan-live-table');
+    if (!table) {
+        const wrapper = document.createElement('div');
+        wrapper.id = 'scan-live-table-wrapper';
+        wrapper.style.cssText = 'overflow-x:auto; margin-top: 8px;';
+        wrapper.innerHTML = `
+        <table id="scan-live-table" style="width:100%; border-collapse:collapse; font-size:13px;">
+            <thead>
+                <tr style="background:#f7f8fa;">
+                    <th style="text-align:left; padding:6px 10px; border-bottom:2px solid #e5e7eb;">Alias</th>
+                    <th style="text-align:left; padding:6px 10px; border-bottom:2px solid #e5e7eb;">Host : Port</th>
+                    <th style="text-align:left; padding:6px 10px; border-bottom:2px solid #e5e7eb;">Service</th>
+                    <th style="text-align:left; padding:6px 10px; border-bottom:2px solid #e5e7eb;">TLS / Protocol</th>
+                    <th style="text-align:left; padding:6px 10px; border-bottom:2px solid #e5e7eb;">Subject / Key Info</th>
+                    <th style="text-align:left; padding:6px 10px; border-bottom:2px solid #e5e7eb;">Expires</th>
+                    <th style="text-align:left; padding:6px 10px; border-bottom:2px solid #e5e7eb;">Findings</th>
+                    <th style="text-align:left; padding:6px 10px; border-bottom:2px solid #e5e7eb;">Status</th>
+                </tr>
+            </thead>
+            <tbody id="scan-live-tbody"></tbody>
+        </table>`;
+        div.appendChild(wrapper);
+        table = document.getElementById('scan-live-table');
+    }
+    return table;
+}
+
+/**
+ * Append a single result row to the live table.
+ */
+function updateLiveResultsTable(r) {
+    ensureLiveScanTable();
+    const tbody = document.getElementById('scan-live-tbody');
+    if (!tbody) return;
+
+    const parsed = tryParseUri(r.uri);
+    const hostPort = parsed ? `${parsed.hostname}:${parsed.port || '?'}` : escapeHtml(r.uri);
+
+    let subjectInfo = '—';
+    if (r.service === 'tls' && r.cert_subject) {
+        subjectInfo = `<span title="${escapeHtml(r.cert_subject)}">${escapeHtml(shortDN(r.cert_subject))}</span>`;
+    } else if (r.service === 'ssh') {
+        // Show host key type (e.g. ssh-ed25519) and algorithm list
+        const keyLine = r.ssh_host_key_type
+            ? `<span style="font-family:monospace; font-size:12px; font-weight:600; color:#7c5cd8;">${escapeHtml(r.ssh_host_key_type)}</span>`
+            : `<span style="font-size:11px; color:#6b7280;">${escapeHtml(r.service_banner || 'SSH detected')}</span>`;
+        const algLine = r.ssh_host_key_fingerprint
+            ? `<br><span style="font-family:monospace; font-size:10px; color:#6b7280;" title="Advertised key algorithms: ${escapeHtml(r.ssh_host_key_fingerprint)}">${escapeHtml(r.ssh_host_key_fingerprint.slice(0, 52))}${r.ssh_host_key_fingerprint.length > 52 ? '…' : ''}</span>`
+            : '';
+        subjectInfo = keyLine + algLine;
+    } else if (r.service_banner) {
+        subjectInfo = `<span style="font-family:monospace; font-size:11px; color:#6b7280;">${escapeHtml(r.service_banner.slice(0, 60))}</span>`;
+    }
+
+    let tlsInfo = '—';
+    if (r.tls_version) {
+        tlsInfo = `${escapeHtml(r.tls_version)}`;
+        if (r.cipher_suite) tlsInfo += `<br><span style="font-size:11px; color:#6b7280;">${escapeHtml(r.cipher_suite)}</span>`;
+    }
+
+    const statusHtml = r.success
+        ? `<span style="color:#16a34a; font-weight:600;">✓ OK</span>`
+        : `<span style="color:#dc2626;" title="${escapeHtml(r.error || '')}">✗ ${escapeHtml((r.error || 'Failed').slice(0, 32))}</span>`;
+
+    const expiry = r.cert_not_after ? escapeHtml(r.cert_not_after) : '—';
+
+    // Colour the row background if there are high-severity findings
+    const findings = r.findings || [];
+    const hasCritical = findings.some(f =>
+        f.startsWith('EXPIRED') || f.startsWith('WEAK_CIPHER') ||
+        f.startsWith('WEAK_KEY') || f.startsWith('SHA1') || f.startsWith('LEGACY_TLS'));
+    const hasWarn = !hasCritical && findings.some(f =>
+        f.startsWith('EXPIRING_SOON') || f.startsWith('SELF_SIGNED') || f.startsWith('LEGACY_SSH'));
+
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid #f3f4f6';
+    if (hasCritical) tr.style.background = '#fef2f2';
+    else if (hasWarn)  tr.style.background = '#fffbeb';
+
+    tr.innerHTML = `
+        <td style="padding:6px 10px; font-family:monospace; font-size:12px;">${escapeHtml(r.alias)}</td>
+        <td style="padding:6px 10px; font-family:monospace; font-size:12px;">${hostPort}</td>
+        <td style="padding:6px 10px;">${serviceBadge(r.service)}</td>
+        <td style="padding:6px 10px; font-size:12px;">${tlsInfo}</td>
+        <td style="padding:6px 10px; font-size:12px; max-width:200px; overflow:hidden; text-overflow:ellipsis;">${subjectInfo}</td>
+        <td style="padding:6px 10px; font-size:12px; white-space:nowrap;">${expiry}</td>
+        <td style="padding:6px 10px; line-height:1.8;">${findingsBadges(findings)}</td>
+        <td style="padding:6px 10px;">${statusHtml}</td>`;
+    tbody.appendChild(tr);
+}
+
+/**
+ * Add the action buttons row above the table once the scan is done.
+ */
+function finalizeScanResultsTable(event) {
     const div = document.getElementById('scan-results');
     if (!div) return;
 
-    const failedRows = result.results.filter(r => !r.success);
-    const successRows = result.results.filter(r => r.success);
+    // Remove old action bar if present
+    const old = document.getElementById('scan-actions-bar');
+    if (old) old.remove();
 
-    let html = `
-        <div class="result-stats" style="margin-bottom: 12px;">
-            <p><strong>Total Targets:</strong> ${result.total_targets}</p>
-            <p><strong>Certificates Retrieved:</strong> <span style="color: var(--success-color, green);">${result.scanned}</span></p>
-            <p><strong>Failed:</strong> <span style="color: var(--danger-color, #c00);">${result.failed}</span></p>
-            <p><strong>Output File:</strong> ${result.filename}</p>
+    const bar = document.createElement('div');
+    bar.id = 'scan-actions-bar';
+    bar.style.cssText = 'margin-bottom: 16px;';
+    bar.innerHTML = `
+        <div class="result-stats" style="margin-bottom: 10px;">
+            <p><strong>Total Targets:</strong> ${event.total}
+               &nbsp;|&nbsp; <strong style="color:var(--success-color,green)">Succeeded:</strong> ${event.scanned}
+               &nbsp;|&nbsp; <strong style="color:#dc2626;">Failed:</strong> ${event.failed}
+               ${event.stopped ? '&nbsp;|&nbsp; <em style="color:#f59e0b;">Stopped early</em>' : ''}
+            </p>
         </div>
-        <div class="result-actions" style="margin-bottom: 16px;">
+        <div class="result-actions">
             <button class="btn btn-success" onclick="downloadScannedCSV()">⬇️ Download Certificates CSV</button>
             <button class="btn btn-primary" onclick="showScannerStep(3)">Next: Import Certificates →</button>
-        </div>
-    `;
-
-    if (failedRows.length > 0) {
-        html += `<details style="margin-top: 8px;"><summary><strong>Failed targets (${failedRows.length})</strong></summary>
-            <table style="width:100%; border-collapse:collapse; margin-top:8px; font-size:13px;">
-                <thead><tr>
-                    <th style="text-align:left; padding:4px 8px; border-bottom:1px solid #e0e0e0;">Alias</th>
-                    <th style="text-align:left; padding:4px 8px; border-bottom:1px solid #e0e0e0;">URI</th>
-                    <th style="text-align:left; padding:4px 8px; border-bottom:1px solid #e0e0e0;">Error</th>
-                </tr></thead><tbody>`;
-        failedRows.forEach(r => {
-            html += `<tr>
-                <td style="padding:4px 8px;">${escapeHtml(r.alias)}</td>
-                <td style="padding:4px 8px;">${escapeHtml(r.uri)}</td>
-                <td style="padding:4px 8px; color:#c00;">${escapeHtml(r.error || '')}</td>
-            </tr>`;
-        });
-        html += `</tbody></table></details>`;
-    }
-
-    div.innerHTML = html;
-    div.style.display = 'block';
+        </div>`;
+    div.insertBefore(bar, div.firstChild);
 }
+
+// -----------------------------------------------------------------------
+// Certificates CSV download (Step 2 → Step 3)
+// -----------------------------------------------------------------------
 
 /**
  * Download the certificates CSV produced by the scan
@@ -326,16 +620,9 @@ function downloadScannedCSV() {
     showNotification('Certificates CSV downloaded', 'success');
 }
 
-/**
- * Escape HTML special characters for safe rendering
- */
-function escapeHtml(str) {
-    return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-}
+// -----------------------------------------------------------------------
+// CSV import (Step 3) — unchanged logic
+// -----------------------------------------------------------------------
 
 /**
  * Handle CSV file selection for import (Step 3)
@@ -421,7 +708,6 @@ async function handleImportCSV() {
         if (file) {
             formData.append('file', file);
         } else if (scannerState.scannedCSV) {
-            // Wrap the in-memory CSV as a File object for the multipart upload
             const blob = new Blob([scannerState.scannedCSV], { type: 'text/csv' });
             formData.append('file', new File([blob], scannerState.scannedFilename || 'certificates.csv', { type: 'text/csv' }));
         } else {
@@ -483,6 +769,10 @@ function displayImportResults(results) {
     resultsDiv.style.display = 'block';
 }
 
+// -----------------------------------------------------------------------
+// Utilities
+// -----------------------------------------------------------------------
+
 /**
  * Read file as text
  */
@@ -495,10 +785,34 @@ function readFileAsText(file) {
     });
 }
 
+/**
+ * Escape HTML special characters for safe rendering
+ */
+function escapeHtml(str) {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+/**
+ * Try to parse a URI string; return null on failure.
+ */
+function tryParseUri(uri) {
+    try { return new URL(uri); } catch { return null; }
+}
+
+/**
+ * Extract the CN from a /CN=foo/O=bar style DN string, or return the full string truncated.
+ */
+function shortDN(dn) {
+    const cnMatch = dn.match(/CN=([^/]+)/);
+    return cnMatch ? cnMatch[1] : dn.slice(0, 40);
+}
+
 // Export functions
 window.scannerModule = {
     init: initScanner,
     showStep: showScannerStep
 };
-
-// Made with Bob

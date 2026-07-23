@@ -301,20 +301,46 @@ The sync captures all GCM asset fields using the confirmed payload:
 
 ### Disconnected Scanner
 
-The scanner page provides a guided three-step workflow for discovering and importing SSL certificates from hosts that may not be directly reachable from GCM.
+The scanner page provides a guided three-step workflow for discovering and importing SSL certificates from hosts that may not be directly reachable from GCM. Scans run as a **real-time streaming operation** — progress is shown target-by-target and can be stopped at any time.
 
 **Step 1 — Generate Targets (Optional)**
 1. Go to the **Scanner** tab.
 2. Enter IP ranges (CIDR or wildcard, e.g. `192.168.1.0/24`, `10.0.0.*`), hostnames, and ports.
-3. Click **Generate Targets** to produce a `Alias, URI` CSV.
+3. Click **Generate Targets** to produce an `Alias, URI` CSV.
 4. Download the CSV or proceed directly to Step 2.
 
 **Step 2 — Scan Targets**
 1. Optionally upload a targets CSV (must have `Alias` and `URI` columns). Leave the file input empty to reuse the CSV generated in Step 1.
 2. Set the per-target **timeout** (default: 5 seconds).
 3. Enable **Allow self-signed certificates** if targets use untrusted certificates.
-4. Click **Run Scan**. The backend connects to each `host:port` over SSL, retrieves the DER-encoded certificate, and base64-encodes it.
-5. View the per-target summary. Download the resulting `Alias, Certdata, URI` certificates CSV.
+4. Click **Run Scan**.
+   - A progress bar shows the current target (`host:port`) being probed in real time.
+   - Click **Stop Scan** at any time to halt after the current target finishes.
+5. Results appear row-by-row as each probe completes. Download the resulting `Alias, Certdata, URI` certificates CSV when done.
+
+**Protocol detection per target:**
+
+| Detected service | How | What is captured |
+|---|---|---|
+| **TLS / HTTPS** | Full TLS handshake (strict, with automatic legacy-TLS fallback) | DER certificate, TLS version, cipher suite, subject/issuer, expiry |
+| **SSH** | SSH binary protocol (RFC 4253 KEXINIT) | Server banner, host-key type (e.g. `ssh-ed25519`), advertised key algorithms |
+| **Plain-text** (FTP, SMTP, POP3, IMAP, …) | TCP banner read | Service label, raw banner |
+
+SSH is detected automatically on standard port `22` and common alternatives `2222` / `22222`, as well as any other port whose banner starts with `SSH-`.
+
+**Security findings reported per target:**
+
+| Finding badge | Meaning |
+|---|---|
+| `EXPIRED` | Certificate is past its `notAfter` date |
+| `EXPIRING SOON` | Certificate expires within 30 days |
+| `LEGACY TLS` | Server negotiated TLSv1.0 or TLSv1.1 |
+| `WEAK CIPHER` | Cipher uses RC4, DES, 3DES, CBC mode, static RSA key exchange, or similar |
+| `WEAK KEY` | RSA/DSA key < 2048 bits or EC key < 224 bits |
+| `SELF-SIGNED` | Certificate subject equals issuer |
+| `SHA-1 CERT` | Certificate is signed with SHA-1 |
+| `WEAK SSH KEY` | Server's preferred host key is `ssh-rsa` (SHA-1 based, deprecated) |
+| `LEGACY SSH KEX` | Server advertises `ssh-rsa` but no `rsa-sha2-*` variants |
 
 **Step 3 — Import Certificates**
 1. Optionally upload a certificates CSV. Leave empty to use the CSV produced by Step 2.
@@ -335,7 +361,9 @@ The scanner page provides a guided three-step workflow for discovering and impor
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/v1/scanner/generate-targets` | Expand IP/host/port inputs into a targets CSV |
-| `POST` | `/api/v1/scanner/run-scan` | Scan targets and retrieve SSL certificates |
+| `POST` | `/api/v1/scanner/run-scan-stream` | Stream scan progress as Server-Sent Events (SSE) — used by the UI |
+| `DELETE` | `/api/v1/scanner/stop-scan/{scan_id}` | Signal a running stream scan to stop after the current target |
+| `POST` | `/api/v1/scanner/run-scan` | Non-streaming batch scan (kept for scripting / API compatibility) |
 | `POST` | `/api/v1/scanner/validate-csv` | Validate a certificates CSV before import |
 | `POST` | `/api/v1/scanner/import-csv` | Import certificates from CSV into GCM |
 

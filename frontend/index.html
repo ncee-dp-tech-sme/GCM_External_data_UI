@@ -544,13 +544,18 @@
                 <div id="scanner-step-2" class="scanner-step" style="display: none;">
                     <div class="scanner-section">
                         <h3>Step 2: Scan Targets for SSL Certificates</h3>
-                        <p>Connect to each target and retrieve its SSL certificate. You can use the generated targets CSV from Step 1, or upload any CSV with <strong>Alias</strong> and <strong>URI</strong> columns.</p>
+                        <p>Connect to each target and retrieve its SSL certificate, detect SSH host keys, and identify running services. Use the targets from Step 1 or upload any CSV with <strong>Alias</strong> and <strong>URI</strong> columns.</p>
+
+                        <!-- Banner shown when Step 1 targets are ready to use -->
+                        <div id="generated-targets-banner" style="display: none; background: #f0fdf4; border: 1px solid #86efac; border-radius: 6px; padding: 10px 14px; margin-bottom: 16px; font-size: 14px;">
+                            ✅ <strong>Generated targets ready:</strong> <span id="banner-target-count"></span> targets from <em><span id="banner-filename"></span></em> will be used automatically. Upload a file below only if you want to override this.
+                        </div>
 
                         <div class="form-section">
                             <div class="form-group">
-                                <label for="scan-targets-file">Targets CSV File *</label>
+                                <label for="scan-targets-file">Targets CSV File (optional override)</label>
                                 <input type="file" id="scan-targets-file" accept=".csv">
-                                <small>Select a targets CSV (Alias, URI columns). Leave empty to use the CSV generated in Step 1.</small>
+                                <small>Leave empty to use the targets generated in Step 1, or upload a different CSV (Alias, URI columns).</small>
                             </div>
 
                             <div class="form-group" style="display: flex; gap: 16px; align-items: flex-end;">
@@ -568,7 +573,20 @@
                             <div class="form-actions">
                                 <button id="prev-scan-btn" class="btn btn-secondary">← Back to Generate</button>
                                 <button id="run-scan-btn" class="btn btn-primary">🔍 Run Scan</button>
+                                <button id="stop-scan-btn" class="btn btn-danger" style="display: none;">⏹ Stop Scan</button>
                             </div>
+                        </div>
+
+                        <!-- Live scan progress -->
+                        <div id="scan-progress-panel" style="display: none; margin-top: 20px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px 16px; background: #f7f8fa;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                <span id="scan-progress-label" style="font-size: 13px; font-weight: 600; color: var(--text-primary);">Starting…</span>
+                                <span id="scan-progress-counter" style="font-size: 13px; font-weight: 700; color: var(--primary-color);">0 / 0</span>
+                            </div>
+                            <div style="background: #e5e7eb; border-radius: 4px; height: 12px; overflow: hidden;">
+                                <div id="scan-progress-bar" style="height: 100%; width: 0%; background: var(--primary-color); border-radius: 4px; transition: width 0.3s ease;"></div>
+                            </div>
+                            <div id="scan-current-target" style="margin-top: 10px; font-size: 13px; font-weight: 600; color: var(--text-primary); min-height: 20px; font-family: monospace; letter-spacing: 0.02em;"></div>
                         </div>
 
                         <!-- Scan Results -->
@@ -795,7 +813,7 @@
     <script src="/js/ui.js?v=2"></script>
     <script src="/js/certificates.js?v=2"></script>
     <script src="/js/assets.js?v=2"></script>
-    <script src="/js/scanner.js?v=3"></script>
+    <script src="/js/scanner.js?v=6"></script>
     <script src="/js/app.js?v=2"></script>
 </body>
 </html>
