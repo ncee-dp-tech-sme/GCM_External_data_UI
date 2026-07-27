@@ -205,3 +205,4 @@ gcm_mcp_server_reference/
 task-outcomes/
 config.toml
 backend/gcm_webui.db
+frontend/presentation-genai-cybersecurity.html

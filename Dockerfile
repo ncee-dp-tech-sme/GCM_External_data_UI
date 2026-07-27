@@ -1,4 +1,6 @@
 # 2026-07-30T00:00:00Z - Initial Dockerfile for GCM Web UI (backend + frontend, single container)
+# 2026-07-25T00:00:00Z - Updated base image from python:3.11-slim to python:3.12.3-slim
+# 2026-07-30T00:00:00Z - Added non-root USER instruction to address missing-user security finding
 #
 # Build:  docker build -t gcm-webui .
 # Run:    docker run -p 8000:8000 --env-file backend/.env gcm-webui
@@ -7,13 +9,16 @@
 # is needed.  The working directory is /app/backend so the app finds its .env
 # (and SQLite DB) relative to CWD — persist /app/backend/gcm_webui.db via a volume.
 
-FROM python:3.11-slim
+FROM python:3.12.3-slim
 
 # Install OS-level dependencies needed by Python packages (e.g. libffi for cryptography)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential \
-        libffi-dev \
+        build-essential=12.9 \
+        libffi-dev=3.4.4-1 \
     && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user for the runtime stage
+RUN groupadd --system appgroup && useradd --system --gid appgroup --no-create-home appuser
 
 WORKDIR /app
 
@@ -33,11 +38,14 @@ COPY certificates ./certificates
 COPY it_assets ./it_assets
 COPY disconnected-scanner ./disconnected-scanner
 
-# Create logs directory
-RUN mkdir -p backend/logs
+# Create logs directory and hand ownership to the runtime user
+RUN mkdir -p backend/logs && chown -R appuser:appgroup /app
 
 # The app reads .env from CWD (backend/), so set the working directory
 WORKDIR /app/backend
+
+# Drop privileges before the process starts
+USER appuser
 
 # Expose the default port
 EXPOSE 8000

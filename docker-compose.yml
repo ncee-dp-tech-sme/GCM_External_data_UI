@@ -16,12 +16,16 @@ services:
     image: gcm-webui:latest
     container_name: gcm-webui
     ports:
-      - "${PORT:-8000}:${PORT:-8000}"
+      - "127.0.0.1:${PORT:-8000}:${PORT:-8000}"
     env_file:
       - backend/.env
     volumes:
       # Persist the SQLite database across container restarts
       - gcm-data:/app/backend
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]

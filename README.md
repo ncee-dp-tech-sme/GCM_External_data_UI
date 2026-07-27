@@ -1,7 +1,7 @@
 # GCM Web UI - Distribution Package
 
-**Version:** 1.3.4
-**Last Updated:** 2026-07-23
+**Version:** 1.3.5
+**Last Updated:** 2026-07-30
 
 ## Overview
 
@@ -38,7 +38,7 @@ This package contains:
 
 Before installing, ensure you have:
 
-- **Python 3.9 or higher** installed
+- **Python 3.12 or higher** installed (3.12.3 recommended)
 - **pip** package manager
 - **Virtual environment** support (venv)
 - **Network access** to your GCM instance
@@ -390,6 +390,8 @@ Alternatively, expand **Or upload a certificates CSV manually** to import only T
 
 The easiest way to run GCM Web UI is as a Docker container. The image bundles the backend and frontend into a single container — no separate web server is required.
 
+The container runs as a **non-root user** (`appuser`) and all Linux capabilities are dropped, making it safe for production and regulated environments.
+
 ### Prerequisites
 
 - Docker 20.10+ and Docker Compose v2 (or `docker-compose` v1.29+)
@@ -413,6 +415,8 @@ open http://localhost:8000
 ```
 
 The SQLite database is persisted in a named Docker volume (`gcm-data`), so your profiles and synced data survive container restarts and image rebuilds.
+
+> **Security note:** The published port is bound to `127.0.0.1` (loopback) by default so it is not reachable from external hosts. To expose it on all interfaces, override `PORT` or edit the `ports` mapping in `docker-compose.yml`.
 
 ### Enabling the Asset Sync Feature
 
@@ -448,9 +452,11 @@ The frontend reads the flag from `/api/v1/config/features` on every page load an
 docker build -t gcm-webui .
 docker run -d \
   --name gcm-webui \
-  -p 8000:8000 \
+  -p 127.0.0.1:8000:8000 \
   --env-file backend/.env \
   -v gcm-data:/app/backend \
+  --cap-drop ALL \
+  --security-opt no-new-privileges \
   gcm-webui
 ```
 
