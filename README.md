@@ -1,6 +1,6 @@
 # GCM Web UI - Distribution Package
 
-**Version:** 1.3.5
+**Version:** 1.3.6
 **Last Updated:** 2026-07-30
 
 ## Overview
@@ -530,6 +530,17 @@ dist/
 - All sensitive data (passwords, tokens, secrets, **API keys**) is encrypted using Fernet symmetric encryption
 - Encryption keys are stored in the `.env` file
 - Never commit `.env` or `config.toml` files to version control
+
+### URI / SSRF Protection
+
+Profile URIs (`app_uri` and `oidc_uri`) are validated on create and update to prevent Server-Side Request Forgery (SSRF):
+
+- URIs must begin with `http://` or `https://`
+- Literal private/loopback/link-local IP addresses are rejected at the schema layer — this covers `127.x.x.x`, `10.x.x.x`, `172.16–31.x.x`, `192.168.x.x`, `169.254.x.x`, `100.64.x.x`, `::1`, ULA (`fc00::/7`), and IPv6 link-local (`fe80::/10`)
+- The hostname `localhost` is always rejected regardless of case
+- Hostname-based URIs (DNS names) are allowed — they are not resolved at validation time
+
+This protection is enforced by [`_assert_public_host()`](backend/app/schemas/profile.py:35) called from all three `ProfileBase`, `ProfileCreate`, and `ProfileUpdate` validators.
 
 ### Best Practices
 
