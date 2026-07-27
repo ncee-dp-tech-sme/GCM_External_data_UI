@@ -1,11 +1,11 @@
 # GCM Web UI - Distribution Package
 
-**Version:** 1.3.6
+**Version:** 1.3.7
 **Last Updated:** 2026-07-30
 
 ## Overview
 
-This is a distributable package of the GCM (Guardium Cryptography Manager) Web UI application. It provides a complete web-based interface for managing GCM operations including certificate management, IT asset management, profile management, authentication, and disconnected SSL certificate scanning. User management features are planned for a future release.
+This is a distributable package of the GCM (Guardium Cryptography Manager) Web UI application. It provides a complete web-based interface for managing GCM operations including certificate management, IT asset management, profile management, authentication, disconnected SSL certificate scanning, and GCM user management.
 
 ## What's Included
 
@@ -29,10 +29,7 @@ This package contains:
 - 📈 **Visual Analytics**: Real-time charts and statistics
 - 🔒 **Security**: Encrypted credential storage with Fernet encryption
 - 🔍 **Disconnected Scanner**: Three-step workflow — generate target lists, scan hosts for SSL certificates, and bulk-import results into GCM
-
-### Coming Soon
-
-- 👥 **User Management**: Keycloak user creation and management *(Future Addition)*
+- 👥 **User Management**: Register existing OIDC users in GCM via `POST /api/v1/user-management/profiles/{profile_id}/users`
 
 ## Prerequisites
 
@@ -540,7 +537,7 @@ Profile URIs (`app_uri` and `oidc_uri`) are validated on create and update to pr
 - The hostname `localhost` is always rejected regardless of case
 - Hostname-based URIs (DNS names) are allowed — they are not resolved at validation time
 
-This protection is enforced by [`_assert_public_host()`](backend/app/schemas/profile.py:35) called from all three `ProfileBase`, `ProfileCreate`, and `ProfileUpdate` validators.
+This protection is enforced by [`_assert_public_host()`](backend/app/schemas/profile.py:35) called from the `ProfileBase`, `ProfileCreate`, and `ProfileUpdate` validators on create/update, **and** re-validated at request time in [`user_management.py`](backend/app/api/user_management.py:33) before any outbound call — preventing SSRF via a stale or tampered database value.
 
 ### Best Practices
 
@@ -860,9 +857,8 @@ For issues or questions:
 The following features are planned for future releases:
 
 ### User Management
-- Keycloak user creation and management
-- Role assignment and permissions
-- User lifecycle management
+- Role assignment and permissions via the UI
+- User lifecycle management (list, deactivate, delete)
 - Integration with GCM user directory
 
 ## License

@@ -1,12 +1,14 @@
 """
 2026-06-01T19:45:00Z - Added GCM user registration endpoint.
+2026-07-30: Validate profile.app_uri before use to prevent SSRF via a stale/tampered DB value.
 """
 
 import requests
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.schemas.profile import _assert_public_host
 from app.schemas.user_management import (
     GCMUserRegistrationRequest,
     GCMUserRegistrationResponse,
@@ -27,11 +29,21 @@ def register_oidc_user(
 ):
     """Register an existing OIDC user in GCM"""
     profile = ProfileService.get_profile(db, profile_id)
+
+    # SSRF guard: re-validate the stored URI before forwarding the request.
+    app_uri = profile.app_uri or ""
+    if not app_uri.startswith(("http://", "https://")):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid profile app_uri scheme")
+    try:
+        _assert_public_host(app_uri)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
     auth_result = AuthService.authorize(db, profile, profile.tenant_id)
     access_token = auth_result["access_token"]
 
     response = requests.post(
-        f"{profile.app_uri}/ibm/usermanagement/api/v1/users",
+        f"{app_uri}/ibm/usermanagement/api/v1/users",
         json={
             "email": request.email,
             "distinguishedName": request.distinguished_name,
