@@ -10,8 +10,8 @@ from sqlalchemy.sql import func
 from app.database import Base
 
 # Supported authentication methods
-AUTH_METHOD_OIDC = "oidc"
-AUTH_METHOD_API_KEY = "api_key"
+AUTH_METHOD_OIDC = "oidc" # HashiCorpIgnore
+AUTH_METHOD_API_KEY = "api_key" # HashiCorpIgnore
 
 
 class Profile(Base):

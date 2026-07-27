@@ -14,8 +14,8 @@ from typing import Optional, Literal
 from datetime import datetime
 
 # Valid authentication method values
-AUTH_METHOD_OIDC = "oidc"
-AUTH_METHOD_API_KEY = "api_key"
+AUTH_METHOD_OIDC = "oidc" # HashiCorpIgnore
+AUTH_METHOD_API_KEY = "api_key" # HashiCorpIgnore
 
 
 # Reject URIs that resolve to private/loopback/link-local/multicast addresses (SSRF mitigation).
